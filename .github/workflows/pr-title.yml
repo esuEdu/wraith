@@ -1,0 +1,25 @@
+name: pr-title
+
+# Separate from ci.yml so that editing a PR title reruns only this check.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Title is a Conventional Commit line
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='^(feat|fix|sec|perf|refactor|test|docs|build|ci|chore)(\([a-z0-9-]+\))?!?: [^ ].{0,70}$'
+          if [[ "$TITLE" =~ $re ]]; then
+            echo "ok: $TITLE"
+          else
+            echo "::error::PR title must look like 'type(scope): summary' (max 72 chars). Types: feat fix sec perf refactor test docs build ci chore. Got: $TITLE"
+            exit 1
+          fi

@@ -46,6 +46,20 @@ connection's local address is your Wi-Fi/Ethernet address and the TLS line says 
 make build && ./wraith version
 ```
 
+## Development
+
+The `make` targets match the CI jobs, so a local run predicts CI:
+
+```sh
+make lint    # gofmt, go vet, golangci-lint, forbidden patterns, rules-check
+make test    # all tests with the race detector
+make build-universal   # arm64 + amd64 binary at dist/wraith
+```
+
+Every change goes through a pull request; see the GitHub Flow, Security and Test Strategy
+specs linked from [docs/SPEC.md](docs/SPEC.md). Rule IDs (R1.1, S2.3, ...) are listed in
+[docs/rules.txt](docs/rules.txt), and tests are named after them.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

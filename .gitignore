@@ -2,3 +2,4 @@
 /dist/
 .DS_Store
 *.har
+coverage.out
