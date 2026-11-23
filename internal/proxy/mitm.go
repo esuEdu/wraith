@@ -151,15 +151,15 @@ func (s *Server) newTLSReverseProxy() *httputil.ReverseProxy {
 		FlushInterval: -1,
 		ErrorLog:      s.http.ErrorLog,
 		ModifyResponse: func(resp *http.Response) error {
-			s.logFlow(resp.Request.Context(), "%s %s %d %s", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode, resp.Proto)
+			s.logFlow(resp.Request.Context(), "%s %s %d %s%s", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode, resp.Proto, s.routeTag(resp.Request.URL.Host, false))
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			var verr *tls.CertificateVerificationError
 			if errors.As(err, &verr) {
-				s.logFlow(r.Context(), "%s %s 502 upstream certificate rejected: %v", r.Method, r.URL.Redacted(), verr.Err)
+				s.logFlow(r.Context(), "%s %s 502%s upstream certificate rejected: %v", r.Method, r.URL.Redacted(), s.routeTag(r.URL.Host, false), verr.Err)
 			} else {
-				s.logFlow(r.Context(), "%s %s 502 %v", r.Method, r.URL.Redacted(), err)
+				s.logFlow(r.Context(), "%s %s 502%s %v", r.Method, r.URL.Redacted(), s.routeTag(r.URL.Host, true), err)
 			}
 			w.WriteHeader(http.StatusBadGateway)
 		},

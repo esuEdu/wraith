@@ -24,6 +24,7 @@ import (
 	"github.com/esuEdu/wraith/internal/home"
 	"github.com/esuEdu/wraith/internal/keychain"
 	"github.com/esuEdu/wraith/internal/proxy"
+	"github.com/esuEdu/wraith/internal/route"
 	"github.com/esuEdu/wraith/internal/sim"
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/sysproxy"
@@ -141,9 +142,8 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd())
+	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd())
 	for _, p := range []struct{ name, short, milestone string }{
-		{"bypass", "add | rm | list hosts that skip the VPN", "M4"},
 		{"doctor", "check proxy, CA and bypass", "M4"},
 		{"export", "save captured flows as HAR", "M5"},
 	} {
@@ -325,6 +325,20 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 		return fail(ExitUsage, "%v", err)
 	}
 	popts.Classify = a.classifier(src, sm, macTrusted)
+
+	// R3.3: every connection is dialed through the router, whatever its source.
+	rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
+	router := route.New(rctx, a.d.Runner, cfg.Bypass, cfg.Interface)
+	rcancel()
+	popts.Dialer = router
+	popts.Route = func(host string) string { r, _ := router.Route(host); return r }
+	if len(cfg.Bypass) > 0 {
+		if ifi, err := router.Iface(); err != nil {
+			a.info("warning: bypass: %v; the %d bypassed host(s) will fail, never use the VPN", err, len(cfg.Bypass))
+		} else {
+			a.info("bypassing %d host(s) on %s, IPv6 first", len(cfg.Bypass), ifi.Name)
+		}
+	}
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
 	for _, ln := range lns {

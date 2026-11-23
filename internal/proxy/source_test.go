@@ -88,3 +88,33 @@ func httptestPlain(t *testing.T) string {
 	t.Cleanup(func() { _ = srv.Close() })
 	return (&url.URL{Scheme: "http", Host: ln.Addr().String()}).String()
 }
+
+func TestR3_5_EachConnectionShowsItsRoute(t *testing.T) {
+	ts := upstreamServer(t, false, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok") })
+	e := startMITM(t, poolOf(ts.Certificate()), func(o *Options) {
+		o.Route = func(host string) string {
+			if host == "127.0.0.1" {
+				return "direct"
+			}
+			return "vpn"
+		}
+	})
+	if _, _, err := get(t, e.client(poolOf(e.ca.Certificate()), false), ts.URL+"/r"); err != nil {
+		t.Fatal(err)
+	}
+	if !e.log.has("CONNECT "+ts.Listener.Addr().String()+" 200 direct") || !e.log.has("GET "+ts.URL+"/r 200 HTTP/1.1 direct") {
+		t.Fatalf("direct route not shown:\n%s", e.log)
+	}
+
+	failing := startMITM(t, nil, func(o *Options) {
+		o.Dialer = hangingDialer{}
+		o.DialTimeout = 50 * time.Millisecond
+		o.Route = func(string) string { return "direct" }
+	})
+	if status := rawStatus(t, failing.addr, "CONNECT blocked.test:443 HTTP/1.1\r\nHost: blocked.test:443\r\n\r\n"); status != http.StatusBadGateway {
+		t.Fatalf("status %d", status)
+	}
+	if !failing.log.has("CONNECT blocked.test:443 502 failed") {
+		t.Fatalf("failed bypass not shown as failed:\n%s", failing.log)
+	}
+}
