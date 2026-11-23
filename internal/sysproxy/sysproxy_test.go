@@ -139,12 +139,10 @@ func TestR4_2_RestorePutsBackExactSettings(t *testing.T) {
 	if !reflect.DeepEqual(web, webBefore) {
 		t.Errorf("web after restore = %+v\nwant %+v", web, webBefore)
 	}
-	// Thunderbolt's secure proxy never had a server: networksetup cannot clear the field,
-	// so it is left as 127.0.0.1:9090 but disabled.
-	wantSecure := secureBefore
-	wantSecure["Thunderbolt Bridge"] = Setting{Enabled: false, Server: "127.0.0.1", Port: 9090}
-	if !reflect.DeepEqual(secure, wantSecure) {
-		t.Errorf("secure after restore = %+v\nwant %+v", secure, wantSecure)
+	// Includes Thunderbolt's secure proxy, which never had a server: it is cleared back to
+	// an empty server and port 0, not left as 127.0.0.1:9090.
+	if !reflect.DeepEqual(secure, secureBefore) {
+		t.Errorf("secure after restore = %+v\nwant %+v", secure, secureBefore)
 	}
 	if stateExists(h) {
 		t.Fatal("state.json left after a successful restore")

@@ -323,11 +323,8 @@ func (a *app) start(ctx context.Context, o config.Overrides, noSystemProxy bool)
 		a.info("received %s, shutting down", s)
 	case <-ctx.Done():
 	}
-	if err := cleanup(); err != nil {
+	if err := cleanup(); err != nil { // sysproxy logs "system proxy settings restored"
 		return fail(ExitState, "%v", err)
-	}
-	if systemSet {
-		a.info("system proxy settings restored")
 	}
 	return nil
 }

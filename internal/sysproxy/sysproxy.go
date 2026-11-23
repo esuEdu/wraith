@@ -301,16 +301,19 @@ func (m *Manager) restore(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// put restores one setting. A setting that never had a server can only be switched off;
-// networksetup cannot clear the server field, so 127.0.0.1 stays there, disabled.
+// put restores one setting: server and port first, then on/off. A setting that never had
+// a server is cleared with `-setwebproxy <service> "" 0` (checked on macOS: it empties
+// both fields, and switches the proxy on, so the state command after it matters).
 func (m *Manager) put(ctx context.Context, service, setVerb, stateVerb string, s Setting) error {
-	if s.Server != "" && s.Port > 0 {
+	server, port := s.Server, "0"
+	if server != "" || s.Port != 0 {
 		if err := execx.CheckPort(s.Port); err != nil {
 			return err
 		}
-		if _, err := m.run.Run(ctx, "networksetup", setVerb, service, s.Server, strconv.Itoa(s.Port)); err != nil {
-			return err
-		}
+		port = strconv.Itoa(s.Port)
+	}
+	if _, err := m.run.Run(ctx, "networksetup", setVerb, service, server, port); err != nil {
+		return err
 	}
 	state := "off"
 	if s.Enabled {
