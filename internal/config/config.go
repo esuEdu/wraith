@@ -255,3 +255,20 @@ func NormalizeHostPattern(raw string) (string, error) {
 	}
 	return p, nil
 }
+
+// MatchesAny reports whether host matches one of patterns, which NormalizeHostPattern has
+// already checked: an exact host, or "*.domain" for any subdomain of domain (not domain
+// itself). Matching ignores case and a trailing dot.
+func MatchesAny(patterns []string, host string) bool {
+	h := strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, p := range patterns {
+		if suffix, ok := strings.CutPrefix(p, "*."); ok {
+			if strings.HasSuffix(h, "."+suffix) {
+				return true
+			}
+		} else if h == p {
+			return true
+		}
+	}
+	return false
+}

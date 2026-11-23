@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net"
 	"net/http"
@@ -371,4 +373,57 @@ func TestNoSystemProxyServesAndLogsWithoutTouchingSettings(t *testing.T) {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+func TestDecryptCreatesTheCAAndDecrypts(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "decrypted")
+	}))
+	defer upstream.Close()
+
+	e := newEnv(t)
+	// The test upstream's certificate is self-signed, so it is named as insecure (S2.4).
+	addr, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--decrypt", "--insecure-upstream", "127.0.0.1")
+	if !strings.Contains(e.stderr.String(), "created the wraith CA") ||
+		!strings.Contains(e.stderr.String(), "not verifying the upstream certificate of 127.0.0.1") {
+		t.Fatalf("stderr:\n%s", e.stderr)
+	}
+	caPEM, err := os.ReadFile(filepath.Join(e.dir, "ca", "ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(caPEM)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+		Proxy:           http.ProxyURL(&url.URL{Scheme: "http", Host: addr}),
+		TLSClientConfig: &tls.Config{RootCAs: roots},
+	}}
+	resp, err := client.Get(upstream.URL + "/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "decrypted" || !strings.HasPrefix(resp.TLS.PeerCertificates[0].Issuer.CommonName, "wraith CA") {
+		t.Fatalf("body %q issuer %q", body, resp.TLS.PeerCertificates[0].Issuer.CommonName)
+	}
+	e.sigs <- syscall.SIGTERM
+	waitExit(t, done)
+	if !strings.Contains(e.stdout.String(), "GET "+upstream.URL+"/x 200") {
+		t.Fatalf("stdout:\n%s", e.stdout)
+	}
+}
+
+func TestS2_4_InsecureUpstreamNeedsDecryptAndOneExactHost(t *testing.T) {
+	for _, args := range [][]string{
+		{"start", "--insecure-upstream", "dev.test"},
+		{"start", "--decrypt", "--no-system-proxy", "--insecure-upstream", "*.dev.test"},
+		{"start", "--decrypt", "--no-system-proxy", "--insecure-upstream", "https://dev.test"},
+	} {
+		e := newEnv(t)
+		args = append(args, "--port", freePort(t))
+		if code := e.run(args...); code != ExitUsage {
+			t.Errorf("%q: exit %d, want %d; stderr %q", args, code, ExitUsage, e.stderr)
+		}
+	}
 }

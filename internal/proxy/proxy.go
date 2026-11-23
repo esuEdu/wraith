@@ -5,6 +5,8 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +46,17 @@ type Options struct {
 	DialTimeout       time.Duration
 	// Logf receives one line per request and per refused connection. Nil discards.
 	Logf func(format string, args ...any)
+
+	// Leaf returns the certificate wraith shows a client for host. Nil turns decryption
+	// off: every CONNECT tunnel is spliced.
+	Leaf func(host string) (*tls.Certificate, error)
+	// Decrypt reports whether a tunnel to host (its SNI name) is decrypted. Nil means
+	// every host is, when Leaf is set. No-decrypt hosts are excluded here (R2.5).
+	Decrypt func(host string) bool
+	// RootCAs verifies upstream servers of decrypted tunnels; nil uses the system roots.
+	RootCAs *x509.CertPool
+	// InsecureUpstream lists hosts whose upstream certificate is not verified (S2.4).
+	InsecureUpstream map[string]bool
 }
 
 func (o *Options) fill() {
@@ -73,15 +86,17 @@ func (o *Options) fill() {
 // Server is a pass-through HTTP proxy. Create it with New, give it listeners from Listen,
 // and stop it with Close.
 type Server struct {
-	opts Options
-	http *http.Server
-	rp   *httputil.ReverseProxy
+	opts  Options
+	http  *http.Server
+	rp    *httputil.ReverseProxy // plain http:// requests
+	tlsRP *httputil.ReverseProxy // requests inside decrypted tunnels
 
 	mu        sync.Mutex
 	closed    bool
 	clients   map[*clientConn]struct{} // counted against MaxConns
 	upstreams map[net.Conn]struct{}    // tunnel upstreams, closed on Close
 	selfPorts map[string]bool          // ports we listen on, for loop detection
+	pinned    map[string]bool          // hosts whose clients rejected our certificate
 }
 
 // New returns a Server with opts, defaults filled in.
@@ -92,6 +107,7 @@ func New(opts Options) *Server {
 		clients:   map[*clientConn]struct{}{},
 		upstreams: map[net.Conn]struct{}{},
 		selfPorts: map[string]bool{},
+		pinned:    map[string]bool{},
 	}
 	errLog := log.New(logfWriter(opts.Logf), "", 0)
 
@@ -132,6 +148,7 @@ func New(opts Options) *Server {
 		MaxHeaderBytes:    opts.MaxHeaderBytes,
 		ErrorLog:          errLog,
 	}
+	s.tlsRP = s.newTLSReverseProxy()
 	return s
 }
 
@@ -247,7 +264,7 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.opts.Logf("CONNECT %s 200 (%s)", target, time.Since(start).Round(time.Millisecond))
-	splice(client, brw.Reader, up)
+	s.tunnel(client, brw.Reader, up, target)
 }
 
 func (s *Server) dialUpstream(ctx context.Context, network, addr string) (net.Conn, error) {

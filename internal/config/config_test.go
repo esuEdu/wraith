@@ -171,3 +171,22 @@ func TestValidSourcesAndPatterns(t *testing.T) {
 		t.Fatalf("bypass not normalized: %v %v", cfg.Bypass, err)
 	}
 }
+
+func TestR2_5_NoDecryptPatternsMatch(t *testing.T) {
+	patterns := Default().NoDecrypt // *.apple.com, *.icloud.com
+	patterns = append(patterns, "api.partner.io")
+	for host, want := range map[string]bool{
+		"gateway.icloud.com": true,
+		"a.b.apple.com":      true,
+		"WWW.APPLE.COM.":     true,
+		"apple.com":          false, // *.apple.com is subdomains only
+		"notapple.com":       false,
+		"api.partner.io":     true,
+		"x.api.partner.io":   false,
+		"example.com":        false,
+	} {
+		if got := MatchesAny(patterns, host); got != want {
+			t.Errorf("MatchesAny(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
