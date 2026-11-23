@@ -11,12 +11,14 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/esuEdu/wraith/internal/ca"
 	"github.com/esuEdu/wraith/internal/config"
 	"github.com/esuEdu/wraith/internal/execx"
 	"github.com/esuEdu/wraith/internal/home"
@@ -181,6 +183,8 @@ func (a *app) startCmd() *cobra.Command {
 		maxBody       int64
 		noSystemProxy bool
 		logMode       bool
+		decrypt       bool
+		insecure      []string
 	)
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -207,7 +211,10 @@ func (a *app) startCmd() *cobra.Command {
 				o.MaxBodyBytes = &maxBody
 			}
 			_ = logMode // the only mode until M5
-			return a.start(cmd.Context(), o, noSystemProxy)
+			if len(insecure) > 0 && !decrypt {
+				return fail(ExitUsage, "--insecure-upstream only applies with --decrypt")
+			}
+			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: decrypt, insecure: insecure})
 		},
 	}
 	f := cmd.Flags()
@@ -218,10 +225,19 @@ func (a *app) startCmd() *cobra.Command {
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
 	f.BoolVar(&noSystemProxy, "no-system-proxy", false, "listen only; leave the system proxy settings alone")
 	f.BoolVar(&logMode, "log", false, "print one line per request instead of the live view")
+	f.BoolVar(&decrypt, "decrypt", false, "decrypt HTTPS from every client that trusts the wraith CA (until source filtering arrives in M3)")
+	f.StringArrayVar(&insecure, "insecure-upstream", nil, "with --decrypt: do not verify this host's certificate, e.g. a local dev server (repeatable)")
 	return cmd
 }
 
-func (a *app) start(ctx context.Context, o config.Overrides, noSystemProxy bool) (err error) {
+type startOpts struct {
+	noSystemProxy bool
+	decrypt       bool
+	insecure      []string
+}
+
+func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err error) {
+	noSystemProxy := so.noSystemProxy
 	h, err := a.openHome()
 	if err != nil {
 		return err
@@ -262,9 +278,18 @@ func (a *app) start(ctx context.Context, o config.Overrides, noSystemProxy bool)
 	if err != nil {
 		return fail(ExitRuntime, "cannot listen on port %d: %v", cfg.Port, err)
 	}
-	srv := proxy.New(proxy.Options{Logf: func(f string, args ...any) {
+	popts := proxy.Options{Logf: func(f string, args ...any) {
 		_, _ = fmt.Fprintf(a.d.Stdout, time.Now().Format("15:04:05")+" "+f+"\n", args...)
-	}})
+	}}
+	if so.decrypt {
+		if err := a.setupDecryption(h, cfg, so.insecure, &popts); err != nil {
+			for _, ln := range lns {
+				_ = ln.Close()
+			}
+			return err
+		}
+	}
+	srv := proxy.New(popts)
 	for _, ln := range lns {
 		go func() { _ = srv.Serve(ln) }()
 	}
@@ -388,5 +413,35 @@ func (a *app) stop(ctx context.Context) error {
 	default:
 		a.info("not running; nothing to restore")
 	}
+	return nil
+}
+
+// setupDecryption loads (or creates) the CA and points the proxy at it. Hosts on the
+// config's no_decrypt list stay spliced (R2.5).
+func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string, popts *proxy.Options) error {
+	c, created, err := ca.Load(h)
+	if err != nil {
+		return fail(ExitState, "CA: %v", err)
+	}
+	if created {
+		a.info("created the wraith CA in %s/%s (fingerprint %s)", h.Path(), ca.Dir, c.Fingerprint())
+	}
+	if soon, when := c.ExpiresSoon(); soon {
+		a.info("warning: the wraith CA expires on %s; run `wraith ca rotate`", when.Format("2006-01-02"))
+	}
+	hosts := map[string]bool{}
+	for _, raw := range insecure {
+		host, err := config.NormalizeHostPattern(raw)
+		if err != nil || strings.HasPrefix(host, "*.") {
+			return fail(ExitUsage, "--insecure-upstream %q: give one exact host", raw)
+		}
+		hosts[host] = true
+		a.info("warning: not verifying the upstream certificate of %s (--insecure-upstream)", host)
+	}
+	noDecrypt := cfg.NoDecrypt
+	popts.Leaf = c.Leaf
+	popts.Decrypt = func(host string) bool { return !config.MatchesAny(noDecrypt, host) }
+	popts.InsecureUpstream = hosts
+	a.info("decrypting HTTPS; a client that rejects the wraith CA gets that host passed through after its first attempt")
 	return nil
 }
