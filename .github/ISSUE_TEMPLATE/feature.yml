@@ -1,0 +1,21 @@
+name: Feature or change
+description: New behaviour, or a change to a business rule
+labels: ["type:feat"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do that wraith does not let you do
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+    validations:
+      required: true
+  - type: input
+    id: rules
+    attributes:
+      label: Rules added or changed
+      description: IDs from the spec, e.g. R3.1, S2.4, or "new"
