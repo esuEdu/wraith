@@ -3,6 +3,7 @@ package sysproxy
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -80,4 +81,29 @@ func parseScutilProxy(out string) map[string]string {
 		kv[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
 	return kv
+}
+
+// Effective is the HTTPS proxy macOS is using right now, from `scutil --proxy`.
+type Effective struct {
+	Enabled bool
+	Host    string
+	Port    int
+}
+
+// EffectiveHTTPS reads the HTTPS proxy in effect, whoever set it.
+func (m *Manager) EffectiveHTTPS(ctx context.Context) (Effective, error) {
+	out, err := m.run.Run(ctx, "scutil", "--proxy")
+	if err != nil {
+		return Effective{}, err
+	}
+	kv := parseScutilProxy(string(out))
+	port, _ := strconv.Atoi(kv["HTTPSPort"])
+	return Effective{Enabled: kv["HTTPSEnable"] == "1", Host: kv["HTTPSProxy"], Port: port}, nil
+}
+
+// StateLeft reports whether state.json exists: wraith set the proxy and has not
+// restored it yet (it is running, or it crashed).
+func (m *Manager) StateLeft() bool {
+	_, err := m.home.ReadFile(StateFile)
+	return err == nil
 }

@@ -203,7 +203,7 @@ func TestR6_3_ExitCodes(t *testing.T) {
 			{"start", "--port", "0"},
 			{"start", "--source", "everything"},
 			{"version", "extra"},
-			{"doctor"},
+			{"export"},
 		} {
 			e := newEnv(t)
 			if code := e.run(args...); code != ExitUsage {
