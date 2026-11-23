@@ -49,6 +49,10 @@ type Deps struct {
 	Ready func(addr string)
 	// StopTimeout is how long `wraith stop` waits for a running instance to exit.
 	StopTimeout time.Duration
+	// SimDevicesDir is CoreSimulator's device folder; "" means the user's.
+	SimDevicesDir string
+	// SimPoll is how often start --decrypt looks for newly booted simulators (R1.6).
+	SimPoll time.Duration
 }
 
 func (d *Deps) fill() {
@@ -76,6 +80,9 @@ func (d *Deps) fill() {
 	}
 	if d.StopTimeout <= 0 {
 		d.StopTimeout = 10 * time.Second
+	}
+	if d.SimPoll <= 0 {
+		d.SimPoll = 2 * time.Second
 	}
 }
 
@@ -125,10 +132,9 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd())
+	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd())
 	for _, p := range []struct{ name, short, milestone string }{
 		{"bypass", "add | rm | list hosts that skip the VPN", "M4"},
-		{"ca", "install | remove | trust | untrust | export the CA", "M2"},
 		{"doctor", "check proxy, CA and bypass", "M4"},
 		{"export", "save captured flows as HAR", "M5"},
 	} {
@@ -281,12 +287,25 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	popts := proxy.Options{Logf: func(f string, args ...any) {
 		_, _ = fmt.Fprintf(a.d.Stdout, time.Now().Format("15:04:05")+" "+f+"\n", args...)
 	}}
+	stopSimWatch := func() {}
 	if so.decrypt {
-		if err := a.setupDecryption(h, cfg, so.insecure, &popts); err != nil {
+		c, err := a.setupDecryption(h, cfg, so.insecure, &popts)
+		if err != nil {
 			for _, ln := range lns {
 				_ = ln.Close()
 			}
 			return err
+		}
+		if sm, err := a.simManager(); err != nil {
+			a.info("simulators: %v", err)
+		} else {
+			watchCtx, cancel := context.WithCancel(ctx)
+			watchDone := make(chan struct{})
+			go func() {
+				defer close(watchDone)
+				sm.Watch(watchCtx, a.d.SimPoll, certPath(h), c.SHA256(), a.info)
+			}()
+			stopSimWatch = func() { cancel(); <-watchDone }
 		}
 	}
 	srv := proxy.New(popts)
@@ -299,6 +318,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	var cleanupErr error
 	cleanup := func() error {
 		once.Do(func() {
+			stopSimWatch()
 			_ = srv.Close()
 			if systemSet {
 				cleanupErr = sp.Restore(context.WithoutCancel(ctx))
@@ -418,10 +438,10 @@ func (a *app) stop(ctx context.Context) error {
 
 // setupDecryption loads (or creates) the CA and points the proxy at it. Hosts on the
 // config's no_decrypt list stay spliced (R2.5).
-func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string, popts *proxy.Options) error {
+func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string, popts *proxy.Options) (*ca.CA, error) {
 	c, created, err := ca.Load(h)
 	if err != nil {
-		return fail(ExitState, "CA: %v", err)
+		return nil, fail(ExitState, "CA: %v", err)
 	}
 	if created {
 		a.info("created the wraith CA in %s/%s (fingerprint %s)", h.Path(), ca.Dir, c.Fingerprint())
@@ -433,7 +453,7 @@ func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string
 	for _, raw := range insecure {
 		host, err := config.NormalizeHostPattern(raw)
 		if err != nil || strings.HasPrefix(host, "*.") {
-			return fail(ExitUsage, "--insecure-upstream %q: give one exact host", raw)
+			return nil, fail(ExitUsage, "--insecure-upstream %q: give one exact host", raw)
 		}
 		hosts[host] = true
 		a.info("warning: not verifying the upstream certificate of %s (--insecure-upstream)", host)
@@ -443,5 +463,5 @@ func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string
 	popts.Decrypt = func(host string) bool { return !config.MatchesAny(noDecrypt, host) }
 	popts.InsecureUpstream = hosts
 	a.info("decrypting HTTPS; a client that rejects the wraith CA gets that host passed through after its first attempt")
-	return nil
+	return c, nil
 }

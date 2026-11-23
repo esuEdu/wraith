@@ -3,8 +3,11 @@ package ca
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -263,5 +266,20 @@ func TestLeafIsReissuedNearExpiryAndCacheIsBounded(t *testing.T) {
 	}
 	if _, ok := c.leaves.byHost["a.test"]; ok {
 		t.Fatal("least recently used leaf not evicted")
+	}
+}
+
+func TestPeekReadsWithoutCreating(t *testing.T) {
+	h := openHome(t)
+	if _, err := Peek(h); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Peek with no CA: err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.Path(), Dir, KeyFile)); err == nil {
+		t.Fatal("Peek created a key")
+	}
+	c := loadCA(t, h)
+	cert, err := Peek(h)
+	if err != nil || !cert.Equal(c.Certificate()) || sha256.Sum256(cert.Raw) != c.SHA256() {
+		t.Fatalf("Peek = %v, %v", cert, err)
 	}
 }

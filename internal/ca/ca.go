@@ -197,6 +197,29 @@ func (c *CA) Fingerprint() string {
 	return b.String()
 }
 
+// SHA256 returns the SHA-256 of the certificate's DER bytes, the key simulators store
+// trusted roots under.
+func (c *CA) SHA256() [32]byte { return sha256.Sum256(c.cert.Raw) }
+
+// Peek returns the stored CA certificate without creating a CA when there is none
+// (the error then matches fs.ErrNotExist) and without reading the key.
+func Peek(h *home.Home) (*x509.Certificate, error) {
+	dir, err := h.Sub(Dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	b, err := dir.ReadFile(CertFile)
+	if err != nil {
+		return nil, err
+	}
+	blk, _ := pem.Decode(b)
+	if blk == nil || blk.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("%s is not a PEM certificate", CertFile)
+	}
+	return x509.ParseCertificate(blk.Bytes)
+}
+
 // ExpiresSoon reports whether the CA expires within WarnBefore (S1.4), and when.
 func (c *CA) ExpiresSoon() (bool, time.Time) {
 	return c.now().Add(WarnBefore).After(c.cert.NotAfter), c.cert.NotAfter

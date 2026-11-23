@@ -22,6 +22,7 @@ import (
 
 	"github.com/esuEdu/wraith/internal/execx"
 	"github.com/esuEdu/wraith/internal/home"
+	"github.com/esuEdu/wraith/internal/sim/simtest"
 	"github.com/esuEdu/wraith/internal/sysproxy"
 	"github.com/esuEdu/wraith/internal/sysproxy/sysproxytest"
 )
@@ -48,6 +49,7 @@ type env struct {
 	t              *testing.T
 	dir            string
 	mac            *sysproxytest.Mac
+	sims           *simtest.Sims
 	fake           *execx.Fake
 	stdout, stderr *syncBuffer
 	sigs           chan os.Signal
@@ -62,6 +64,7 @@ func newEnv(t *testing.T) *env {
 		t:      t,
 		dir:    filepath.Join(t.TempDir(), "wraith"),
 		mac:    sysproxytest.NewMac(),
+		sims:   simtest.New(t.TempDir()),
 		fake:   execx.NewFake(),
 		stdout: &syncBuffer{},
 		stderr: &syncBuffer{},
@@ -70,7 +73,12 @@ func newEnv(t *testing.T) *env {
 		killed: make(chan int, 1),
 		euid:   501,
 	}
-	e.fake.Handler = e.mac.Run
+	e.fake.Handler = func(tool string, args []string) ([]byte, error) {
+		if tool == "xcrun" || tool == "sqlite3" {
+			return e.sims.Run(tool, args)
+		}
+		return e.mac.Run(tool, args)
+	}
 	return e
 }
 
@@ -87,8 +95,10 @@ func (e *env) deps() Deps {
 			e.sigs <- sig
 			return nil
 		},
-		Ready:       func(addr string) { e.ready <- addr },
-		StopTimeout: 5 * time.Second,
+		Ready:         func(addr string) { e.ready <- addr },
+		StopTimeout:   5 * time.Second,
+		SimDevicesDir: e.sims.Dir,
+		SimPoll:       10 * time.Millisecond,
 	}
 }
 
