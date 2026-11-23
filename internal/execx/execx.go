@@ -1,5 +1,5 @@
 // Package execx is the one way wraith runs external tools (networksetup, simctl, scutil,
-// lsof, ps, security, sqlite3, plutil). Tools are looked up by name in a fixed table of absolute paths and
+// lsof, ps, security, sqlite3, plutil, ipconfig, route). Tools are looked up by name in a fixed table of absolute paths and
 // run with an argument list, never through a shell (S4.2). Arguments are checked by the
 // validators in this package before they reach a tool (S4.3).
 package execx
@@ -28,8 +28,10 @@ var DefaultTools = map[string]string{
 	"ps":           "/bin/ps",
 	"xcrun":        "/usr/bin/xcrun",
 	"security":     "/usr/bin/security",
-	"sqlite3":      "/usr/bin/sqlite3", // simulator trust stores (wraith ca remove)
-	"plutil":       "/usr/bin/plutil",  // app bundle ids (source filter)
+	"sqlite3":      "/usr/bin/sqlite3",   // simulator trust stores (wraith ca remove)
+	"plutil":       "/usr/bin/plutil",    // app bundle ids (source filter)
+	"ipconfig":     "/usr/sbin/ipconfig", // an interface's DHCP DNS server (bypass)
+	"route":        "/sbin/route",        // scoped default routes (bypass)
 }
 
 const (
