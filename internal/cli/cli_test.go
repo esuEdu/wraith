@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -50,6 +51,8 @@ type env struct {
 	dir            string
 	mac            *sysproxytest.Mac
 	sims           *simtest.Sims
+	stdin          string
+	macTrusts      bool
 	fake           *execx.Fake
 	stdout, stderr *syncBuffer
 	sigs           chan os.Signal
@@ -74,16 +77,43 @@ func newEnv(t *testing.T) *env {
 		euid:   501,
 	}
 	e.fake.Handler = func(tool string, args []string) ([]byte, error) {
-		if tool == "xcrun" || tool == "sqlite3" {
+		switch tool {
+		case "xcrun", "sqlite3":
 			return e.sims.Run(tool, args)
+		case "security":
+			return e.security(args)
 		}
 		return e.mac.Run(tool, args)
 	}
 	return e
 }
 
+// security fakes /usr/bin/security's trust commands.
+func (e *env) security(args []string) ([]byte, error) {
+	switch args[0] {
+	case "verify-cert":
+		if e.macTrusts {
+			return nil, nil
+		}
+		return nil, &execx.Error{Tool: "security", Args: args, ExitCode: 2}
+	case "add-trusted-cert":
+		e.macTrusts = true
+		return nil, nil
+	case "remove-trusted-cert", "delete-certificate":
+		if !e.macTrusts {
+			return nil, &execx.Error{Tool: "security", Args: args, ExitCode: 1}
+		}
+		if args[0] == "remove-trusted-cert" {
+			e.macTrusts = false
+		}
+		return nil, nil
+	}
+	return nil, fmt.Errorf("unexpected security %v", args)
+}
+
 func (e *env) deps() Deps {
 	return Deps{
+		Stdin:   strings.NewReader(e.stdin),
 		Stdout:  e.stdout,
 		Stderr:  e.stderr,
 		Runner:  e.fake,

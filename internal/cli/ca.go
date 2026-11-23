@@ -1,19 +1,26 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha1" // #nosec G505 -- certificate identifier for `security`, not a security hash
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/esuEdu/wraith/internal/ca"
 	"github.com/esuEdu/wraith/internal/execx"
 	"github.com/esuEdu/wraith/internal/home"
+	"github.com/esuEdu/wraith/internal/keychain"
 	"github.com/esuEdu/wraith/internal/sim"
 )
 
@@ -24,18 +31,117 @@ func (a *app) caCmd() *cobra.Command {
 		Long: "wraith decrypts HTTPS with its own CA, created on this Mac in ~/.wraith/ca/.\n" +
 			"By default it is trusted by iOS simulators only, never by the Mac itself.",
 	}
-	cmd.AddCommand(a.caInstallCmd(), a.caRemoveCmd(), a.caExportCmd(), a.caRotateCmd())
-	for _, name := range []string{"trust", "untrust"} {
-		cmd.AddCommand(&cobra.Command{
-			Use:                name,
-			Short:              name + " the CA in the Mac keychain (planned, M2 #21)",
-			DisableFlagParsing: true,
-			RunE: func(*cobra.Command, []string) error {
-				return fail(ExitUsage, "ca %s is not implemented yet", name)
-			},
-		})
-	}
+	cmd.AddCommand(a.caInstallCmd(), a.caRemoveCmd(), a.caExportCmd(), a.caRotateCmd(),
+		a.caTrustCmd(), a.caUntrustCmd())
 	return cmd
+}
+
+// trustWarning is shown before the Mac is told to trust the CA (S1.5).
+const trustWarning = `This makes the Mac itself trust the wraith CA. Then:
+  - wraith can decrypt HTTPS from every app on this Mac that uses the system trust store;
+  - anyone who obtains ~/.wraith/ca/ca.key can impersonate any website to this Mac.
+Undo it any time with: wraith ca untrust --mac
+`
+
+func (a *app) caTrustCmd() *cobra.Command {
+	var mac, yes bool
+	cmd := &cobra.Command{
+		Use:   "trust --mac",
+		Short: "Make the Mac trust the CA, so Mac apps can be decrypted (asks first)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !mac {
+				return fail(ExitUsage, "ca trust needs --mac (simulators get the CA with `wraith ca install`)")
+			}
+			h, err := a.openHome()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = h.Close() }()
+			if _, _, err := ca.Load(h); err != nil {
+				return fail(ExitState, "CA: %v", err)
+			}
+			k, err := keychain.New(a.d.Runner)
+			if err != nil {
+				return fail(ExitRuntime, "%v", err)
+			}
+			if ok, err := k.Trusted(cmd.Context(), certPath(h)); err != nil {
+				return fail(ExitState, "checking the keychain: %v", err)
+			} else if ok {
+				a.info("the Mac already trusts the wraith CA")
+				return nil
+			}
+			_, _ = io.WriteString(a.d.Stderr, trustWarning)
+			if !yes && !a.confirm("Trust the wraith CA on this Mac?") {
+				return fail(ExitRuntime, "not changed")
+			}
+			a.info("macOS will ask for your password to change trust settings")
+			if err := k.Trust(cmd.Context(), certPath(h)); err != nil {
+				return fail(ExitState, "adding the CA to the keychain: %v", err)
+			}
+			a.info("the Mac now trusts the wraith CA; Mac apps can be decrypted with `wraith start --decrypt`")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&mac, "mac", false, "the Mac keychain (required)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation")
+	return cmd
+}
+
+func (a *app) caUntrustCmd() *cobra.Command {
+	var mac bool
+	cmd := &cobra.Command{
+		Use:   "untrust --mac",
+		Short: "Remove the CA from the Mac keychain",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !mac {
+				return fail(ExitUsage, "ca untrust needs --mac (simulators: `wraith ca remove`)")
+			}
+			h, err := a.openHome()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = h.Close() }()
+			cert, err := ca.Peek(h)
+			if errors.Is(err, fs.ErrNotExist) {
+				a.info("there is no wraith CA; nothing to remove")
+				return nil
+			}
+			if err != nil {
+				return fail(ExitState, "CA: %v", err)
+			}
+			k, err := keychain.New(a.d.Runner)
+			if err != nil {
+				return fail(ExitRuntime, "%v", err)
+			}
+			sum := sha1.Sum(cert.Raw) // #nosec G401 -- how `security` names certificates
+			removed, err := k.Untrust(cmd.Context(), certPath(h), strings.ToUpper(hex.EncodeToString(sum[:])))
+			if err != nil {
+				return fail(ExitState, "removing the CA from the keychain: %v", err)
+			}
+			if removed {
+				a.info("the Mac no longer trusts the wraith CA")
+			} else {
+				a.info("the Mac did not trust the wraith CA; nothing to remove")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&mac, "mac", false, "the Mac keychain (required)")
+	return cmd
+}
+
+// confirm asks a yes/no question on stderr and reads the answer from stdin; anything but
+// y or yes, including end of input, is no.
+func (a *app) confirm(question string) bool {
+	_, _ = fmt.Fprintf(a.d.Stderr, "%s [y/N] ", question)
+	line, _ := bufio.NewReader(a.d.Stdin).ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
 }
 
 func (a *app) simManager() (*sim.Manager, error) {
