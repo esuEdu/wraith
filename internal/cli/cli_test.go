@@ -23,6 +23,7 @@ import (
 
 	"github.com/esuEdu/wraith/internal/execx"
 	"github.com/esuEdu/wraith/internal/home"
+	"github.com/esuEdu/wraith/internal/sim"
 	"github.com/esuEdu/wraith/internal/sim/simtest"
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/sysproxy"
@@ -477,3 +478,5 @@ func TestS2_4_InsecureUpstreamNeedsDecryptAndOneExactHost(t *testing.T) {
 		}
 	}
 }
+
+func (e *env) newSimManager() (*sim.Manager, error) { return sim.New(e.fake, e.sims.Dir) }

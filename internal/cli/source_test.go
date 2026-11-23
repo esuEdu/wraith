@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/esuEdu/wraith/internal/sim/simtest"
 	"github.com/esuEdu/wraith/internal/source"
 )
 
@@ -118,4 +119,38 @@ func readCAPEM(t *testing.T, e *env) string {
 func readFile(p string) (string, error) {
 	b, err := os.ReadFile(p)
 	return string(b), err
+}
+
+func TestSimulatorNamesLoadInTheBackground(t *testing.T) {
+	e := newEnv(t)
+	sm, err := e.newSimManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := newSimNames(sm)
+	if got := n.name(simtest.Booted); got != simtest.Booted[:8] {
+		t.Fatalf("before loading: %q, want the UDID's start", got)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for n.name(simtest.Booted) != "iPhone 18 Pro Max" {
+		if time.Now().After(deadline) {
+			t.Fatal("name never loaded")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestR1_1_SimulatorByNameMatchesFromTheFirstConnection(t *testing.T) {
+	ts, _ := upstreamTLS(t)
+	e := newEnv(t) // the default origin is a simulator app on simtest.Booted
+	addr, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--source", "simulator:iPhone 18 Pro Max", "--insecure-upstream", "127.0.0.1")
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM([]byte(readCAPEM(t, e)))
+	resp, _ := fetch(t, addr, ts.URL+"/first", roots)
+	e.sigs <- syscall.SIGTERM
+	waitExit(t, done)
+	if !strings.HasPrefix(resp.TLS.PeerCertificates[0].Issuer.CommonName, "wraith CA") ||
+		!strings.Contains(e.stdout.String(), "[sim iPhone 18 Pro Max · Shop] GET "+ts.URL+"/first 200") {
+		t.Fatalf("first connection not matched by name:\n%s", e.stdout)
+	}
 }

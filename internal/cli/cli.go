@@ -501,6 +501,14 @@ func (a *app) classifier(src source.Source, sm *sim.Manager, macTrusted bool) fu
 		lookup = source.NewResolver(a.d.Runner).Lookup
 	}
 	names := newSimNames(sm)
+	if src.Kind == "simulator" && src.Arg != "" {
+		names.load() // simulator:<name> needs the names before the first connection
+	} else {
+		names.mu.Lock()
+		names.refreshing, names.lastTry = true, time.Now()
+		names.mu.Unlock()
+		go names.load()
+	}
 	return func(ctx context.Context, client, local net.Addr) proxy.Verdict {
 		c, ok1 := client.(*net.TCPAddr)
 		l, ok2 := local.(*net.TCPAddr)
@@ -519,16 +527,36 @@ func (a *app) classifier(src source.Source, sm *sim.Manager, macTrusted bool) fu
 	}
 }
 
-// simNames maps simulator UDIDs to device names for labels and simulator:<name>,
-// refreshing from simctl at most every 30 seconds.
+// simNames maps simulator UDIDs to device names for labels and simulator:<name>. It
+// refreshes from simctl in the background, so a slow simctl (a simulator still booting)
+// never holds up a connection; until a name is known the label shows the UDID's start.
 type simNames struct {
-	sm    *sim.Manager
-	mu    sync.Mutex
-	names map[string]string
-	at    time.Time
+	sm         *sim.Manager
+	mu         sync.Mutex
+	names      map[string]string
+	lastTry    time.Time
+	refreshing bool
 }
 
 func newSimNames(sm *sim.Manager) *simNames { return &simNames{sm: sm, names: map[string]string{}} }
+
+// load refreshes the names now, waiting for simctl (up to 15 s).
+func (n *simNames) load() {
+	if n.sm == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	devs, err := n.sm.Devices(ctx)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.refreshing = false
+	if err == nil {
+		for _, d := range devs {
+			n.names[d.UDID] = d.Name
+		}
+	}
+}
 
 func (n *simNames) name(udid string) string {
 	n.mu.Lock()
@@ -536,18 +564,9 @@ func (n *simNames) name(udid string) string {
 	if name, ok := n.names[udid]; ok {
 		return name
 	}
-	if n.sm != nil && time.Since(n.at) > 30*time.Second {
-		n.at = time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if devs, err := n.sm.Devices(ctx); err == nil {
-			for _, d := range devs {
-				n.names[d.UDID] = d.Name
-			}
-		}
-	}
-	if name, ok := n.names[udid]; ok {
-		return name
+	if n.sm != nil && !n.refreshing && time.Since(n.lastTry) > 2*time.Second {
+		n.refreshing, n.lastTry = true, time.Now()
+		go n.load()
 	}
 	if len(udid) > 8 {
 		return udid[:8]
