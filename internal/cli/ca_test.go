@@ -206,3 +206,20 @@ func newEnvSharing(e *env) *env {
 	o.dir, o.mac, o.sims, o.fake = e.dir, e.mac, e.sims, e.fake
 	return o
 }
+
+func TestS1_5_TrustIsExplainedBeforeAskingAndItsStateIsShown(t *testing.T) {
+	e := newEnv(t)
+	e.stdin = "n\n"
+	_ = e.run("ca", "trust", "--mac")
+	out := e.stderr.String()
+	warn, ask := strings.Index(out, "every app on this Mac"), strings.Index(out, "[y/N]")
+	if warn < 0 || ask < 0 || warn > ask || !strings.Contains(out, "ca.key") {
+		t.Fatalf("the consequences are not stated before the question:\n%s", out)
+	}
+	_, done := e.startAsync("--port", freePort(t), "--no-system-proxy")
+	e.sigs <- syscall.SIGTERM
+	waitExit(t, done)
+	if !strings.Contains(e.stderr.String(), "the Mac does not trust the wraith CA") {
+		t.Fatalf("start does not show the Mac's trust state:\n%s", e.stderr)
+	}
+}

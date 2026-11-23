@@ -335,9 +335,9 @@ func TestParseClientHello(t *testing.T) {
 	}
 }
 
-// FuzzParseClientHello checks that no input makes the parser panic or report a name it
-// did not see (S5.4). Run: go test -fuzz=FuzzParseClientHello ./internal/proxy
-func FuzzParseClientHello(f *testing.F) {
+// FuzzS5_4_ParseClientHello checks that no input makes the parser panic or report a name it
+// did not see (S5.4). Run: go test -fuzz=FuzzS5_4_ParseClientHello ./internal/proxy
+func FuzzS5_4_ParseClientHello(f *testing.F) {
 	f.Add(captureHello(f, "api.example.com", []string{"h2", "http/1.1"}))
 	f.Add(captureHello(f, "", nil))
 	f.Add([]byte{0x16, 3, 1, 0, 4, 1, 0, 0, 0})
