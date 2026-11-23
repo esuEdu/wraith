@@ -207,7 +207,9 @@ func TestR1_1_SourcesParseAndMatch(t *testing.T) {
 		{"app:com.google.chrome", false, true, false},
 		{"app:Google Chrome", false, true, false},
 		{"app:Shop", true, false, false}, // an app inside a simulator
-		{"pid:19", false, true, false},   // a parent's pid covers its children
+		{"app:curl", false, false, true}, // a command-line tool, by executable name
+		{"app:Shop.app", false, false, false},
+		{"pid:19", false, true, false}, // a parent's pid covers its children
 		{"pid:30", false, false, true},
 	}
 	for _, c := range cases {

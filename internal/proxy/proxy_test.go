@@ -412,3 +412,25 @@ func TestS5_1_ConnectionLimitClosesExtraConnections(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 }
+
+// hangingDialer never connects; it waits for the context to end.
+type hangingDialer struct{}
+
+func (hangingDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestDialTimeoutAppliesToPlainHTTPAndTunnels(t *testing.T) {
+	_, addr := startProxy(t, Options{Dialer: hangingDialer{}, DialTimeout: 100 * time.Millisecond})
+	start := time.Now()
+	if status := rawStatus(t, addr, "GET http://slow.invalid/ HTTP/1.1\r\nHost: slow.invalid\r\n\r\n"); status != http.StatusBadGateway {
+		t.Fatalf("plain HTTP: status %d, want 502", status)
+	}
+	if status := rawStatus(t, addr, "CONNECT slow.invalid:443 HTTP/1.1\r\nHost: slow.invalid:443\r\n\r\n"); status != http.StatusBadGateway {
+		t.Fatalf("CONNECT: status %d, want 502", status)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("took %s; the dial timeout was not applied", d)
+	}
+}

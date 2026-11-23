@@ -36,7 +36,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 
 func TestR2_2_StartDecryptPutsTheCAIntoSimulatorsOnly(t *testing.T) {
 	e := newEnv(t)
-	_, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--decrypt")
+	_, done := e.startAsync("--port", freePort(t), "--no-system-proxy")
 	sum := e.caSum()
 	waitUntil(t, "the booted simulator to get the CA", func() bool { return e.sims.Trusts(simtest.Booted, sum) })
 
@@ -88,7 +88,7 @@ func TestR2_3_MacTrustOnlyWithExplicitConsent(t *testing.T) {
 		t.Fatalf("trust when already trusted: exit %d, %d adds", code, adds(e))
 	}
 
-	_, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--decrypt")
+	_, done := e.startAsync("--port", freePort(t), "--no-system-proxy")
 	if !strings.Contains(e.stderr.String(), "the Mac trusts the wraith CA") {
 		t.Fatalf("start did not show the Mac trusts the CA:\n%s", e.stderr)
 	}

@@ -24,6 +24,8 @@ import (
 	"github.com/esuEdu/wraith/internal/home"
 	"github.com/esuEdu/wraith/internal/keychain"
 	"github.com/esuEdu/wraith/internal/proxy"
+	"github.com/esuEdu/wraith/internal/sim"
+	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/sysproxy"
 	"github.com/esuEdu/wraith/internal/version"
 )
@@ -53,8 +55,10 @@ type Deps struct {
 	StopTimeout time.Duration
 	// SimDevicesDir is CoreSimulator's device folder; "" means the user's.
 	SimDevicesDir string
-	// SimPoll is how often start --decrypt looks for newly booted simulators (R1.6).
+	// SimPoll is how often start looks for newly booted simulators (R1.6).
 	SimPoll time.Duration
+	// Lookup identifies the process behind a client connection; nil uses source.Resolver.
+	Lookup func(ctx context.Context, clientPort, proxyPort int) (source.Origin, error)
 }
 
 func (d *Deps) fill() {
@@ -194,7 +198,7 @@ func (a *app) startCmd() *cobra.Command {
 		maxBody       int64
 		noSystemProxy bool
 		logMode       bool
-		decrypt       bool
+		noDecrypt     bool
 		insecure      []string
 	)
 	cmd := &cobra.Command{
@@ -222,22 +226,22 @@ func (a *app) startCmd() *cobra.Command {
 				o.MaxBodyBytes = &maxBody
 			}
 			_ = logMode // the only mode until M5
-			if len(insecure) > 0 && !decrypt {
-				return fail(ExitUsage, "--insecure-upstream only applies with --decrypt")
+			if len(insecure) > 0 && noDecrypt {
+				return fail(ExitUsage, "--insecure-upstream does not apply with --no-decrypt")
 			}
-			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: decrypt, insecure: insecure})
+			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: !noDecrypt, insecure: insecure})
 		},
 	}
 	f := cmd.Flags()
 	f.IntVar(&port, "port", 9090, "proxy port on 127.0.0.1 and ::1")
-	f.StringVar(&source, "source", "simulator", "capture source: all, simulator[:udid|name], app:<name|bundle-id>, pid:<pid> (filtering arrives in M3)")
+	f.StringVar(&source, "source", "simulator", "capture source: all, simulator[:udid|name], app:<name|bundle-id>, pid:<pid>")
 	f.StringVar(&iface, "iface", "auto", "physical interface for bypassed hosts (bypass arrives in M4)")
 	f.IntVar(&maxFlows, "max-flows", 5000, "flows kept in memory")
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
 	f.BoolVar(&noSystemProxy, "no-system-proxy", false, "listen only; leave the system proxy settings alone")
 	f.BoolVar(&logMode, "log", false, "print one line per request instead of the live view")
-	f.BoolVar(&decrypt, "decrypt", false, "decrypt HTTPS from every client that trusts the wraith CA (until source filtering arrives in M3)")
-	f.StringArrayVar(&insecure, "insecure-upstream", nil, "with --decrypt: do not verify this host's certificate, e.g. a local dev server (repeatable)")
+	f.BoolVar(&noDecrypt, "no-decrypt", false, "pass HTTPS through without decrypting it")
+	f.StringArrayVar(&insecure, "insecure-upstream", nil, "do not verify this host's certificate, e.g. a local dev server (repeatable)")
 	return cmd
 }
 
@@ -292,17 +296,20 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	popts := proxy.Options{Logf: func(f string, args ...any) {
 		_, _ = fmt.Fprintf(a.d.Stdout, time.Now().Format("15:04:05")+" "+f+"\n", args...)
 	}}
+	sm, smErr := a.simManager()
+	macTrusted := false
 	stopSimWatch := func() {}
 	if so.decrypt {
-		c, err := a.setupDecryption(h, cfg, so.insecure, &popts)
+		c, trusted, err := a.setupDecryption(h, cfg, so.insecure, &popts)
+		macTrusted = trusted
 		if err != nil {
 			for _, ln := range lns {
 				_ = ln.Close()
 			}
 			return err
 		}
-		if sm, err := a.simManager(); err != nil {
-			a.info("simulators: %v", err)
+		if smErr != nil {
+			a.info("simulators: %v", smErr)
 		} else {
 			watchCtx, cancel := context.WithCancel(ctx)
 			watchDone := make(chan struct{})
@@ -313,6 +320,12 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 			stopSimWatch = func() { cancel(); <-watchDone }
 		}
 	}
+	src, err := source.Parse(cfg.Source)
+	if err != nil {
+		return fail(ExitUsage, "%v", err)
+	}
+	popts.Classify = a.classifier(src, sm, macTrusted)
+	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
 	for _, ln := range lns {
 		go func() { _ = srv.Serve(ln) }()
@@ -443,10 +456,10 @@ func (a *app) stop(ctx context.Context) error {
 
 // setupDecryption loads (or creates) the CA and points the proxy at it. Hosts on the
 // config's no_decrypt list stay spliced (R2.5).
-func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string, popts *proxy.Options) (*ca.CA, error) {
+func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string, popts *proxy.Options) (*ca.CA, bool, error) {
 	c, created, err := ca.Load(h)
 	if err != nil {
-		return nil, fail(ExitState, "CA: %v", err)
+		return nil, false, fail(ExitState, "CA: %v", err)
 	}
 	if created {
 		a.info("created the wraith CA in %s/%s (fingerprint %s)", h.Path(), ca.Dir, c.Fingerprint())
@@ -458,22 +471,86 @@ func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string
 	for _, raw := range insecure {
 		host, err := config.NormalizeHostPattern(raw)
 		if err != nil || strings.HasPrefix(host, "*.") {
-			return nil, fail(ExitUsage, "--insecure-upstream %q: give one exact host", raw)
+			return nil, false, fail(ExitUsage, "--insecure-upstream %q: give one exact host", raw)
 		}
 		hosts[host] = true
 		a.info("warning: not verifying the upstream certificate of %s (--insecure-upstream)", host)
 	}
+	macTrusted := false
 	if k, err := keychain.New(a.d.Runner); err == nil {
 		if trusted, err := k.Trusted(context.Background(), certPath(h)); err == nil && trusted {
-			a.info("the Mac trusts the wraith CA: HTTPS from Mac apps is decrypted too")
+			macTrusted = true
+			a.info("the Mac trusts the wraith CA: HTTPS from Mac apps in the source is decrypted too")
 		} else if err == nil {
-			a.info("the Mac does not trust the wraith CA (the default): Mac apps get each host passed through after one failed attempt; see `wraith ca trust --mac`")
+			a.info("the Mac does not trust the wraith CA (the default): Mac apps in the source are passed through, not decrypted; see `wraith ca trust --mac`")
 		}
 	}
 	noDecrypt := cfg.NoDecrypt
 	popts.Leaf = c.Leaf
 	popts.Decrypt = func(host string) bool { return !config.MatchesAny(noDecrypt, host) }
 	popts.InsecureUpstream = hosts
-	a.info("decrypting HTTPS; a client that rejects the wraith CA gets that host passed through after its first attempt")
-	return c, nil
+	return c, macTrusted, nil
+}
+
+// classifier builds the proxy's per-connection decision (R1): identify the process,
+// match it against the source, and allow decryption for simulator processes, or for Mac
+// processes when the Mac trusts the CA.
+func (a *app) classifier(src source.Source, sm *sim.Manager, macTrusted bool) func(context.Context, net.Addr, net.Addr) proxy.Verdict {
+	lookup := a.d.Lookup
+	if lookup == nil {
+		lookup = source.NewResolver(a.d.Runner).Lookup
+	}
+	names := newSimNames(sm)
+	return func(ctx context.Context, client, local net.Addr) proxy.Verdict {
+		c, ok1 := client.(*net.TCPAddr)
+		l, ok2 := local.(*net.TCPAddr)
+		if !ok1 || !ok2 {
+			return proxy.Verdict{}
+		}
+		o, err := lookup(ctx, c.Port, l.Port)
+		if err != nil || !src.Matches(o, names.name) {
+			return proxy.Verdict{} // R1.3, R1.4: outside the source, untouched and unseen
+		}
+		label := o.Label()
+		if o.Simulator() {
+			label = "sim " + names.name(o.SimUDID) + " · " + label
+		}
+		return proxy.Verdict{InSource: true, Decrypt: o.Simulator() || macTrusted, Label: label}
+	}
+}
+
+// simNames maps simulator UDIDs to device names for labels and simulator:<name>,
+// refreshing from simctl at most every 30 seconds.
+type simNames struct {
+	sm    *sim.Manager
+	mu    sync.Mutex
+	names map[string]string
+	at    time.Time
+}
+
+func newSimNames(sm *sim.Manager) *simNames { return &simNames{sm: sm, names: map[string]string{}} }
+
+func (n *simNames) name(udid string) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if name, ok := n.names[udid]; ok {
+		return name
+	}
+	if n.sm != nil && time.Since(n.at) > 30*time.Second {
+		n.at = time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if devs, err := n.sm.Devices(ctx); err == nil {
+			for _, d := range devs {
+				n.names[d.UDID] = d.Name
+			}
+		}
+	}
+	if name, ok := n.names[udid]; ok {
+		return name
+	}
+	if len(udid) > 8 {
+		return udid[:8]
+	}
+	return udid
 }
