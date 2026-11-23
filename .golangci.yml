@@ -1,0 +1,19 @@
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - gosec # weak crypto, file modes, exec with variables (S1, S4)
+    - bodyclose
+    - errorlint
+    - misspell
+  exclusions:
+    paths:
+      - spike/ # throwaway M0 code, deleted after M0
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - spike/
