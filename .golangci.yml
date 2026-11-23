@@ -12,7 +12,8 @@ linters:
       - spike/ # throwaway M0 code, deleted after M0
     rules:
       - path: _test\.go
-        linters: [errcheck] # deferred Close and Fprintf in tests
+        # deferred Close/Fprintf; fixtures that look like credentials; temp-dir file reads
+        linters: [errcheck, gosec]
 
 formatters:
   enable:
