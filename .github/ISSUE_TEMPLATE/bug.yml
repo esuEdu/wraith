@@ -1,0 +1,48 @@
+name: Bug report
+description: Something wraith does wrong
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems go to private vulnerability reporting, not here (see SECURITY.md).
+        Remove tokens, cookies and private hosts from anything you paste.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. wraith start --source simulator
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: wraith version
+      description: Output of `wraith version`
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: macOS 26.1, Apple M3
+    validations:
+      required: true
+  - type: input
+    id: vpn
+    attributes:
+      label: VPN client, if any
+      placeholder: WireGuard 1.0.16 / none
+  - type: textarea
+    id: doctor
+    attributes:
+      label: wraith doctor output
+      render: text

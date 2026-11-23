@@ -1,0 +1,20 @@
+# Applied by scripts/bootstrap-github.sh. Format: name, color, description.
+- {name: "type:feat", color: "1d76db", description: "New behaviour a user can see"}
+- {name: "type:bug", color: "d73a4a", description: "Something is broken"}
+- {name: "type:security", color: "b60205", description: "Security fix or hardening"}
+- {name: "type:chore", color: "c5def5", description: "Build, CI, deps, housekeeping"}
+- {name: "type:docs", color: "0075ca", description: "README and specs"}
+- {name: "area:proxy", color: "fbca04", description: "Listener, CONNECT, forwarding"}
+- {name: "area:source", color: "fbca04", description: "Process lookup and source filter (R1)"}
+- {name: "area:route", color: "fbca04", description: "Bypass rules, bound dialer, DNS (R3)"}
+- {name: "area:sysproxy", color: "fbca04", description: "System proxy set and restore (R4)"}
+- {name: "area:ca", color: "fbca04", description: "CA and leaf certificates (R2, S1)"}
+- {name: "area:sim", color: "fbca04", description: "Simulator integration"}
+- {name: "area:tui", color: "fbca04", description: "Live view and log mode"}
+- {name: "area:export", color: "fbca04", description: "HAR, curl, redaction (R5)"}
+- {name: "area:release", color: "fbca04", description: "Homebrew, release workflow (R7)"}
+- {name: "blocked", color: "000000", description: "Waiting on something else"}
+- {name: "needs-vpn-test", color: "e99695", description: "Needs the manual check on a real Mac with a VPN"}
+- {name: "good first issue", color: "7057ff", description: "Small and well defined"}
+- {name: "dependencies", color: "0366d6", description: "Dependency bumps"}
+- {name: "ci-nightly", color: "5319e7", description: "Opened by a failed nightly run"}
