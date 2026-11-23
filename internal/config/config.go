@@ -272,3 +272,58 @@ func MatchesAny(patterns []string, host string) bool {
 	}
 	return false
 }
+
+// WriteBypass replaces the bypass list in config.yaml with patterns (R6.2), editing the
+// YAML document in place so the rest of the file and its comments stay. patterns must
+// already be normalized. A missing file starts from DefaultYAML.
+func WriteBypass(h *home.Home, patterns []string) error {
+	b, err := h.ReadFile(FileName)
+	if errors.Is(err, fs.ErrNotExist) {
+		b = []byte(DefaultYAML)
+	} else if err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return fmt.Errorf("%s: %w", FileName, err)
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		if err := yaml.Unmarshal([]byte(DefaultYAML), &doc); err != nil {
+			return err
+		}
+	}
+	root := doc.Content[0]
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	if len(patterns) == 0 {
+		seq.Style = yaml.FlowStyle // bypass: []
+	}
+	for _, p := range patterns {
+		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: yaml.DoubleQuotedStyle})
+	}
+	found := false
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "bypass" {
+			old := root.Content[i+1]
+			seq.LineComment, seq.HeadComment, seq.FootComment = old.LineComment, old.HeadComment, old.FootComment
+			root.Content[i+1] = seq
+			found = true
+			break
+		}
+	}
+	if !found {
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "bypass"}, seq)
+	}
+	var out bytes.Buffer
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return err
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	if _, err := Parse(out.Bytes()); err != nil {
+		return fmt.Errorf("the edited config would not load: %w", err)
+	}
+	return h.WriteFile(FileName, out.Bytes(), 0o600)
+}

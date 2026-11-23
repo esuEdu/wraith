@@ -190,3 +190,35 @@ func TestR2_5_NoDecryptPatternsMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestR6_2_BypassListIsWrittenBackKeepingComments(t *testing.T) {
+	h := openHome(t)
+	if _, _, err := Load(h); err != nil { // writes DefaultYAML
+		t.Fatal(err)
+	}
+	if err := WriteBypass(h, []string{"*.corp.example.com", "api.partner.io"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.Bypass, ",") != "*.corp.example.com,api.partner.io" || cfg.Port != 9090 {
+		t.Fatalf("after write: bypass %v port %d", cfg.Bypass, cfg.Port)
+	}
+	b, _ := h.ReadFile(FileName)
+	for _, comment := range []string{"# wraith configuration", "# proxy port on 127.0.0.1 and ::1", "# always passed through, never decrypted"} {
+		if !strings.Contains(string(b), comment) {
+			t.Errorf("comment %q lost:\n%s", comment, b)
+		}
+	}
+	if err := WriteBypass(h, nil); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _, _ := Load(h); len(cfg.Bypass) != 0 {
+		t.Fatalf("emptied list: %v", cfg.Bypass)
+	}
+	if b, _ := h.ReadFile(FileName); !strings.Contains(string(b), "bypass: []") {
+		t.Fatalf("empty list not written as []:\n%s", b)
+	}
+}
