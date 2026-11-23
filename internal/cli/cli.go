@@ -22,6 +22,7 @@ import (
 	"github.com/esuEdu/wraith/internal/config"
 	"github.com/esuEdu/wraith/internal/execx"
 	"github.com/esuEdu/wraith/internal/home"
+	"github.com/esuEdu/wraith/internal/keychain"
 	"github.com/esuEdu/wraith/internal/proxy"
 	"github.com/esuEdu/wraith/internal/sysproxy"
 	"github.com/esuEdu/wraith/internal/version"
@@ -39,6 +40,7 @@ const (
 // replace them.
 type Deps struct {
 	Stdout, Stderr io.Writer
+	Stdin          io.Reader
 	Runner         execx.Runner
 	HomeDir        string
 	Geteuid        func() int
@@ -61,6 +63,9 @@ func (d *Deps) fill() {
 	}
 	if d.Stderr == nil {
 		d.Stderr = os.Stderr
+	}
+	if d.Stdin == nil {
+		d.Stdin = os.Stdin
 	}
 	if d.Runner == nil {
 		d.Runner = execx.Default()
@@ -457,6 +462,13 @@ func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string
 		}
 		hosts[host] = true
 		a.info("warning: not verifying the upstream certificate of %s (--insecure-upstream)", host)
+	}
+	if k, err := keychain.New(a.d.Runner); err == nil {
+		if trusted, err := k.Trusted(context.Background(), certPath(h)); err == nil && trusted {
+			a.info("the Mac trusts the wraith CA: HTTPS from Mac apps is decrypted too")
+		} else if err == nil {
+			a.info("the Mac does not trust the wraith CA (the default): Mac apps get each host passed through after one failed attempt; see `wraith ca trust --mac`")
+		}
 	}
 	noDecrypt := cfg.NoDecrypt
 	popts.Leaf = c.Leaf

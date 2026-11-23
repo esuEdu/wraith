@@ -46,9 +46,65 @@ func TestR2_2_StartDecryptPutsTheCAIntoSimulatorsOnly(t *testing.T) {
 	e.sigs <- syscall.SIGTERM
 	waitExit(t, done)
 	for _, c := range e.fake.Calls() {
-		if strings.HasPrefix(c, "security ") {
-			t.Fatalf("touched the Mac keychain: %q", c)
+		if strings.HasPrefix(c, "security ") && !strings.HasPrefix(c, "security verify-cert ") {
+			t.Fatalf("changed the Mac keychain: %q", c) // R2.2: reading trust state is all
 		}
+	}
+	if !strings.Contains(e.stderr.String(), "the Mac does not trust the wraith CA") {
+		t.Fatalf("start did not say whether the Mac trusts the CA (S1.5):\n%s", e.stderr)
+	}
+}
+
+func TestR2_3_MacTrustOnlyWithExplicitConsent(t *testing.T) {
+	adds := func(e *env) int {
+		n := 0
+		for _, c := range e.fake.Calls() {
+			if strings.HasPrefix(c, "security add-trusted-cert") {
+				n++
+			}
+		}
+		return n
+	}
+
+	e := newEnv(t)
+	if code := e.run("ca", "trust"); code != ExitUsage {
+		t.Fatalf("trust without --mac: exit %d", code)
+	}
+	for _, answer := range []string{"", "n\n", "nope\n"} {
+		e.stdin = answer
+		if code := e.run("ca", "trust", "--mac"); code != ExitRuntime || adds(e) != 0 || e.macTrusts {
+			t.Fatalf("answer %q: exit %d, %d add calls", answer, code, adds(e))
+		}
+	}
+	if !strings.Contains(e.stderr.String(), "every app on this Mac") || !strings.Contains(e.stderr.String(), "[y/N]") {
+		t.Fatalf("no warning or question (S1.5):\n%s", e.stderr)
+	}
+
+	e.stdin = "y\n"
+	if code := e.run("ca", "trust", "--mac"); code != ExitOK || !e.macTrusts || adds(e) != 1 {
+		t.Fatalf("after yes: exit %d trusted %v", code, e.macTrusts)
+	}
+	if code := e.run("ca", "trust", "--mac"); code != ExitOK || adds(e) != 1 || !strings.Contains(e.stderr.String(), "already trusts") {
+		t.Fatalf("trust when already trusted: exit %d, %d adds", code, adds(e))
+	}
+
+	_, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--decrypt")
+	if !strings.Contains(e.stderr.String(), "the Mac trusts the wraith CA") {
+		t.Fatalf("start did not show the Mac trusts the CA:\n%s", e.stderr)
+	}
+	e.sigs <- syscall.SIGTERM
+	waitExit(t, done)
+
+	if code := e.run("ca", "untrust", "--mac"); code != ExitOK || e.macTrusts || !strings.Contains(e.stderr.String(), "no longer trusts") {
+		t.Fatalf("untrust: exit %d trusted %v", code, e.macTrusts)
+	}
+	if code := e.run("ca", "untrust", "--mac"); code != ExitOK || !strings.Contains(e.stderr.String(), "did not trust") {
+		t.Fatalf("second untrust: exit %d", code)
+	}
+
+	y := newEnv(t)
+	if code := y.run("ca", "trust", "--mac", "--yes"); code != ExitOK || !y.macTrusts {
+		t.Fatalf("--yes: exit %d trusted %v", code, y.macTrusts)
 	}
 }
 
