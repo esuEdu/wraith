@@ -292,3 +292,21 @@ func TestCorruptStateIsReportedNotGuessed(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestEffectiveHTTPSAndStateLeft(t *testing.T) {
+	m, mac, _ := setup(t)
+	mac.Scutil = "<dictionary> {\n  HTTPSEnable : 1\n  HTTPSPort : 9090\n  HTTPSProxy : 127.0.0.1\n}\n"
+	eff, err := m.EffectiveHTTPS(context.Background())
+	if err != nil || !eff.Enabled || eff.Host != "127.0.0.1" || eff.Port != 9090 {
+		t.Fatalf("EffectiveHTTPS = %+v, %v", eff, err)
+	}
+	if m.StateLeft() {
+		t.Fatal("state reported before Enable")
+	}
+	if err := m.Enable(context.Background(), 9090); err != nil {
+		t.Fatal(err)
+	}
+	if !m.StateLeft() {
+		t.Fatal("state not reported after Enable")
+	}
+}

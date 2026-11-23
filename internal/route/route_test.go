@@ -228,3 +228,25 @@ func TestDetectIfaceUsesScopedDefaultRoutes(t *testing.T) {
 		t.Fatal("bad interface name accepted")
 	}
 }
+
+func TestProbeReportsBothPathsPerFamily(t *testing.T) {
+	_, port := listen(t, "tcp6", "[::1]:0")
+	r, _ := loopbackRouter(t, []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}, nil)
+	probes, err := r.Probe(context.Background(), "probe.test", port)
+	if err != nil || len(probes) != 2 {
+		t.Fatalf("probes %+v err %v", probes, err)
+	}
+	v6, v4 := probes[0], probes[1]
+	if v6.Family != "IPv6" || v6.Default.Err != nil || v6.Bound.Err != nil || v6.Bound.Via != "lo0" || v6.Default.Via != "lo0" {
+		t.Fatalf("IPv6 probe %+v", v6)
+	}
+	if v4.Family != "IPv4" || v4.Default.Err == nil || v4.Bound.Err == nil { // nothing listens on IPv4
+		t.Fatalf("IPv4 probe %+v", v4)
+	}
+
+	r.ifaceErr = ErrNoInterface
+	probes, _ = r.Probe(context.Background(), "probe.test", port)
+	if !errors.Is(probes[0].Bound.Err, ErrNoInterface) || probes[0].Default.Err != nil {
+		t.Fatalf("without an interface: %+v", probes[0])
+	}
+}

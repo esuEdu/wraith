@@ -142,9 +142,8 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd())
+	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd(), a.doctorCmd())
 	for _, p := range []struct{ name, short, milestone string }{
-		{"doctor", "check proxy, CA and bypass", "M4"},
 		{"export", "save captured flows as HAR", "M5"},
 	} {
 		root.AddCommand(&cobra.Command{
