@@ -50,23 +50,71 @@ func Open(dir string) (*Home, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fi.Mode()&fs.ModeSymlink != 0 {
-		return nil, fmt.Errorf("%s is a symlink; wraith needs a real directory there", dir)
-	}
-	if !fi.IsDir() {
-		return nil, fmt.Errorf("%s is not a directory", dir)
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return nil, fmt.Errorf("%s is owned by uid %d, not you (uid %d)", dir, st.Uid, os.Getuid())
-	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return nil, fmt.Errorf("%s has mode %04o; other users must not reach it. Fix with: chmod 700 %q", dir, perm, dir)
+	if err := checkPrivate(dir, fi, true); err != nil {
+		return nil, err
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
 	return &Home{path: dir, root: root}, nil
+}
+
+// Sub opens the subdirectory name (creating it with mode 0700), with the same checks as
+// Open. It is how the CA gets its own private directory (R2.1, S1.2).
+func (h *Home) Sub(name string) (*Home, error) {
+	if err := checkName(name); err != nil {
+		return nil, err
+	}
+	if err := h.root.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return nil, err
+	}
+	path := filepath.Join(h.path, name)
+	fi, err := h.root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkPrivate(path, fi, true); err != nil {
+		return nil, err
+	}
+	root, err := h.root.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	return &Home{path: path, root: root}, nil
+}
+
+// CheckPrivate returns an error unless name is a regular file (not a symlink) owned by
+// the current user with no group or other permissions (S1.2). The error says how to fix it.
+func (h *Home) CheckPrivate(name string) error {
+	if err := checkName(name); err != nil {
+		return err
+	}
+	fi, err := h.root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	return checkPrivate(filepath.Join(h.path, name), fi, false)
+}
+
+func checkPrivate(path string, fi fs.FileInfo, dir bool) error {
+	what, fix := "file", "600"
+	if dir {
+		what, fix = "directory", "700"
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; wraith needs a real %s there", path, what)
+	}
+	if dir && !fi.IsDir() || !dir && !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a %s", path, what)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%s is owned by uid %d, not you (uid %d)", path, st.Uid, os.Getuid())
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Errorf("%s has mode %04o; other users must not reach it. Fix with: chmod %s %q", path, perm, fix, path)
+	}
+	return nil
 }
 
 // Path returns the directory's path.

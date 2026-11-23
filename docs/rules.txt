@@ -6,7 +6,7 @@
 # verified_by: test | test+manual | manual | lint | release
 # Change this file in the same PR as the spec.
 #
-# done:
+# done: M0 M1
 id,milestone,verified_by
 R1.1,M3,test
 R1.2,M3,test

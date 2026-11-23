@@ -162,3 +162,44 @@ func TestR4_5_OneInstanceAtATime(t *testing.T) {
 	}
 	_ = l2.Unlock()
 }
+
+func TestS1_2_SubdirAndFilesArePrivate(t *testing.T) {
+	h := openTemp(t)
+	sub, err := h.Sub("ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	fi, err := os.Stat(sub.Path())
+	if err != nil || fi.Mode().Perm() != 0o700 || sub.Path() != filepath.Join(h.Path(), "ca") {
+		t.Fatalf("sub dir: %v %v %s", fi, err, sub.Path())
+	}
+	if err := sub.WriteFile("ca.key", []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.CheckPrivate("ca.key"); err != nil {
+		t.Fatalf("0600 file refused: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(sub.Path(), "ca.key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.CheckPrivate("ca.key"); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("0644 key: err = %v, want refusal with chmod 600", err)
+	}
+
+	if err := os.Chmod(sub.Path(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Sub("ca"); err == nil || !strings.Contains(err.Error(), "chmod 700") {
+		t.Fatalf("0755 sub dir: err = %v", err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(h.Path(), "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Sub("linked"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked sub dir: err = %v", err)
+	}
+	if _, err := h.Sub("../x"); err == nil {
+		t.Fatal("path in Sub name accepted")
+	}
+}
