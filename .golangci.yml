@@ -10,6 +10,9 @@ linters:
   exclusions:
     paths:
       - spike/ # throwaway M0 code, deleted after M0
+    rules:
+      - path: _test\.go
+        linters: [errcheck] # deferred Close and Fprintf in tests
 
 formatters:
   enable:
