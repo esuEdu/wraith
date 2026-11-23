@@ -23,7 +23,9 @@ import (
 
 	"github.com/esuEdu/wraith/internal/execx"
 	"github.com/esuEdu/wraith/internal/home"
+	"github.com/esuEdu/wraith/internal/sim"
 	"github.com/esuEdu/wraith/internal/sim/simtest"
+	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/sysproxy"
 	"github.com/esuEdu/wraith/internal/sysproxy/sysproxytest"
 )
@@ -53,6 +55,8 @@ type env struct {
 	sims           *simtest.Sims
 	stdin          string
 	macTrusts      bool
+	origin         source.Origin // who "connected" through the proxy
+	originErr      error
 	fake           *execx.Fake
 	stdout, stderr *syncBuffer
 	sigs           chan os.Signal
@@ -75,6 +79,10 @@ func newEnv(t *testing.T) *env {
 		ready:  make(chan string, 1),
 		killed: make(chan int, 1),
 		euid:   501,
+		origin: source.Origin{ // a simulator app, inside the default source
+			PID: 4242, Chain: []source.Process{{PID: 4242, Path: "/sim/Shop.app/Shop"}},
+			SimUDID: simtest.Booted, AppPath: "/sim/Shop.app", AppName: "Shop",
+		},
 	}
 	e.fake.Handler = func(tool string, args []string) ([]byte, error) {
 		switch tool {
@@ -129,6 +137,9 @@ func (e *env) deps() Deps {
 		StopTimeout:   5 * time.Second,
 		SimDevicesDir: e.sims.Dir,
 		SimPoll:       10 * time.Millisecond,
+		Lookup: func(context.Context, int, int) (source.Origin, error) {
+			return e.origin, e.originErr
+		},
 	}
 }
 
@@ -423,7 +434,7 @@ func TestDecryptCreatesTheCAAndDecrypts(t *testing.T) {
 
 	e := newEnv(t)
 	// The test upstream's certificate is self-signed, so it is named as insecure (S2.4).
-	addr, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--decrypt", "--insecure-upstream", "127.0.0.1")
+	addr, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--insecure-upstream", "127.0.0.1")
 	if !strings.Contains(e.stderr.String(), "created the wraith CA") ||
 		!strings.Contains(e.stderr.String(), "not verifying the upstream certificate of 127.0.0.1") {
 		t.Fatalf("stderr:\n%s", e.stderr)
@@ -449,16 +460,16 @@ func TestDecryptCreatesTheCAAndDecrypts(t *testing.T) {
 	}
 	e.sigs <- syscall.SIGTERM
 	waitExit(t, done)
-	if !strings.Contains(e.stdout.String(), "GET "+upstream.URL+"/x 200") {
+	if !strings.Contains(e.stdout.String(), "[sim iPhone 18 Pro Max · Shop] GET "+upstream.URL+"/x 200") {
 		t.Fatalf("stdout:\n%s", e.stdout)
 	}
 }
 
 func TestS2_4_InsecureUpstreamNeedsDecryptAndOneExactHost(t *testing.T) {
 	for _, args := range [][]string{
-		{"start", "--insecure-upstream", "dev.test"},
-		{"start", "--decrypt", "--no-system-proxy", "--insecure-upstream", "*.dev.test"},
-		{"start", "--decrypt", "--no-system-proxy", "--insecure-upstream", "https://dev.test"},
+		{"start", "--no-decrypt", "--insecure-upstream", "dev.test"},
+		{"start", "--no-system-proxy", "--insecure-upstream", "*.dev.test"},
+		{"start", "--no-system-proxy", "--insecure-upstream", "https://dev.test"},
 	} {
 		e := newEnv(t)
 		args = append(args, "--port", freePort(t))
@@ -467,3 +478,5 @@ func TestS2_4_InsecureUpstreamNeedsDecryptAndOneExactHost(t *testing.T) {
 		}
 	}
 }
+
+func (e *env) newSimManager() (*sim.Manager, error) { return sim.New(e.fake, e.sims.Dir) }

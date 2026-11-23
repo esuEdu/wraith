@@ -2,6 +2,7 @@ package source
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -60,7 +61,11 @@ func (s Source) Matches(o Origin, simName func(udid string) string) bool {
 		}
 		return simName != nil && strings.EqualFold(s.Arg, simName(o.SimUDID))
 	case "app":
-		return o.AppPath != "" && (strings.EqualFold(s.Arg, o.BundleID) || strings.EqualFold(s.Arg, o.AppName))
+		if o.AppPath != "" {
+			return strings.EqualFold(s.Arg, o.BundleID) || strings.EqualFold(s.Arg, o.AppName)
+		}
+		// Not in a bundle (a command-line tool): match the executable's name.
+		return len(o.Chain) > 0 && strings.EqualFold(s.Arg, filepath.Base(o.Chain[0].Path))
 	case "pid":
 		for _, p := range o.Chain {
 			if p.PID == s.PID {

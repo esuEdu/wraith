@@ -57,6 +57,55 @@ type Options struct {
 	RootCAs *x509.CertPool
 	// InsecureUpstream lists hosts whose upstream certificate is not verified (S2.4).
 	InsecureUpstream map[string]bool
+
+	// Classify decides, once per client connection and on its first request, whether the
+	// connection is inside the capture source and whether it may be decrypted. A
+	// connection outside the source is passed through untouched and never logged (R1.3).
+	// Nil puts every connection in the source, decryptable.
+	Classify func(ctx context.Context, client, local net.Addr) Verdict
+}
+
+// Verdict is Classify's answer for one client connection.
+type Verdict struct {
+	InSource bool
+	Decrypt  bool   // may be decrypted (still subject to Leaf and Decrypt(host))
+	Label    string // shown in front of its log lines, e.g. "sim iPhone 17 · Shop"
+}
+
+type connKey struct{}
+type verdictKey struct{}
+
+// connInfo is stored in each connection's context; the verdict is computed lazily so a
+// slow lookup never holds up the accept loop.
+type connInfo struct {
+	client, local net.Addr
+	once          sync.Once
+	v             Verdict
+}
+
+func (s *Server) verdictFor(ctx context.Context) Verdict {
+	ci, ok := ctx.Value(connKey{}).(*connInfo)
+	if !ok || s.opts.Classify == nil {
+		return Verdict{InSource: true, Decrypt: true}
+	}
+	ci.once.Do(func() { ci.v = s.opts.Classify(ctx, ci.client, ci.local) })
+	return ci.v
+}
+
+// logFlow logs a line about a request or tunnel, unless its connection is outside the
+// source (R1.3: never shown). The verdict travels in the request's context.
+func (s *Server) logFlow(ctx context.Context, format string, args ...any) {
+	v, ok := ctx.Value(verdictKey{}).(Verdict)
+	if !ok {
+		v = Verdict{InSource: true}
+	}
+	if !v.InSource {
+		return
+	}
+	if v.Label != "" {
+		format = "[" + strings.ReplaceAll(v.Label, "%", "%%") + "] " + format
+	}
+	s.opts.Logf(format, args...)
 }
 
 func (o *Options) fill() {
@@ -133,11 +182,11 @@ func New(opts Options) *Server {
 		FlushInterval: -1, // stream responses (SSE, long polls) without buffering
 		ErrorLog:      errLog,
 		ModifyResponse: func(resp *http.Response) error {
-			s.opts.Logf("%s %s %d", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode)
+			s.logFlow(resp.Request.Context(), "%s %s %d", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.opts.Logf("%s %s 502 %v", r.Method, r.URL.Redacted(), err)
+			s.logFlow(r.Context(), "%s %s 502 %v", r.Method, r.URL.Redacted(), err)
 			w.WriteHeader(http.StatusBadGateway)
 		},
 	}
@@ -147,6 +196,9 @@ func New(opts Options) *Server {
 		IdleTimeout:       opts.IdleTimeout,
 		MaxHeaderBytes:    opts.MaxHeaderBytes,
 		ErrorLog:          errLog,
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			return context.WithValue(ctx, connKey{}, &connInfo{client: c.RemoteAddr(), local: c.LocalAddr()})
+		},
 	}
 	s.tlsRP = s.newTLSReverseProxy()
 	return s
@@ -207,6 +259,7 @@ func (s *Server) Close() error {
 
 // ServeHTTP handles one proxy request.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(context.WithValue(r.Context(), verdictKey{}, s.verdictFor(r.Context())))
 	if r.Method == http.MethodConnect {
 		s.serveConnect(w, r)
 		return
@@ -239,7 +292,7 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
 	up, err := s.dialUpstream(ctx, "tcp", target)
 	cancel()
 	if err != nil {
-		s.opts.Logf("CONNECT %s 502 %v", target, err)
+		s.logFlow(r.Context(), "CONNECT %s 502 %v", target, err)
 		http.Error(w, "cannot reach "+target, http.StatusBadGateway)
 		return
 	}
@@ -263,11 +316,16 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
 		_ = up.Close()
 		return
 	}
-	s.opts.Logf("CONNECT %s 200 (%s)", target, time.Since(start).Round(time.Millisecond))
-	s.tunnel(client, brw.Reader, up, target)
+	s.logFlow(r.Context(), "CONNECT %s 200 (%s)", target, time.Since(start).Round(time.Millisecond))
+	v, _ := r.Context().Value(verdictKey{}).(Verdict)
+	s.tunnel(client, brw.Reader, up, target, v)
 }
 
+// dialUpstream dials through the configured Dialer, giving up after DialTimeout, for
+// tunnels and both forwarding transports alike.
 func (s *Server) dialUpstream(ctx context.Context, network, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.opts.DialTimeout)
+	defer cancel()
 	return s.opts.Dialer.DialContext(ctx, network, addr)
 }
 

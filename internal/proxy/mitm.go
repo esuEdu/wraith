@@ -18,8 +18,8 @@ import (
 // or when the first record is not a TLS ClientHello, or the host is pinned (R2.4) or
 // excluded by Decrypt (R2.5), the bytes are spliced untouched. Otherwise the TLS session
 // is terminated with a leaf for the host and the requests inside are forwarded.
-func (s *Server) tunnel(client net.Conn, buffered *bufio.Reader, up net.Conn, target string) {
-	if s.opts.Leaf == nil {
+func (s *Server) tunnel(client net.Conn, buffered *bufio.Reader, up net.Conn, target string, v Verdict) {
+	if s.opts.Leaf == nil || !v.InSource || !v.Decrypt {
 		splice(client, buffered, up)
 		return
 	}
@@ -40,7 +40,7 @@ func (s *Server) tunnel(client net.Conn, buffered *bufio.Reader, up net.Conn, ta
 		return
 	}
 	_ = up.Close() // the forwarding transport dials and verifies the upstream itself
-	s.serveDecrypted(&peekedConn{Conn: client, r: br}, name, target)
+	s.serveDecrypted(&peekedConn{Conn: client, r: br}, name, target, v)
 }
 
 // peekHello reads, without consuming, the client's first TLS record. It reports false
@@ -65,7 +65,8 @@ func (s *Server) peekHello(client net.Conn, br *bufio.Reader) (clientHello, bool
 	return hello, err == nil
 }
 
-func (s *Server) serveDecrypted(c net.Conn, name, target string) {
+func (s *Server) serveDecrypted(c net.Conn, name, target string, v Verdict) {
+	vctx := context.WithValue(context.Background(), verdictKey{}, v)
 	tc := tls.Server(c, &tls.Config{
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return s.opts.Leaf(name) },
 		NextProtos:     []string{"h2", "http/1.1"},
@@ -77,7 +78,7 @@ func (s *Server) serveDecrypted(c net.Conn, name, target string) {
 	if err != nil {
 		// The client refused wraith's certificate: it pins, or does not trust the CA.
 		s.markPinned(name)
-		s.opts.Logf("TLS %s: client rejected wraith's certificate (%v); passing %s through from now on", name, err, name)
+		s.logFlow(vctx, "TLS %s: client rejected wraith's certificate (%v); passing %s through from now on", name, err, name)
 		_ = tc.Close()
 		return
 	}
@@ -87,7 +88,8 @@ func (s *Server) serveDecrypted(c net.Conn, name, target string) {
 			http.Error(w, "CONNECT inside a decrypted tunnel is not supported", http.StatusBadRequest)
 			return
 		}
-		s.tlsRP.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), targetKey{}, target)))
+		ctx := context.WithValue(context.WithValue(r.Context(), targetKey{}, target), verdictKey{}, v)
+		s.tlsRP.ServeHTTP(w, r.WithContext(ctx))
 	})
 	// net/http serves HTTP/2 itself when the *tls.Conn it accepts negotiated "h2".
 	l := newOneConnListener(tc)
@@ -149,15 +151,15 @@ func (s *Server) newTLSReverseProxy() *httputil.ReverseProxy {
 		FlushInterval: -1,
 		ErrorLog:      s.http.ErrorLog,
 		ModifyResponse: func(resp *http.Response) error {
-			s.opts.Logf("%s %s %d %s", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode, resp.Proto)
+			s.logFlow(resp.Request.Context(), "%s %s %d %s", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode, resp.Proto)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			var verr *tls.CertificateVerificationError
 			if errors.As(err, &verr) {
-				s.opts.Logf("%s %s 502 upstream certificate rejected: %v", r.Method, r.URL.Redacted(), verr.Err)
+				s.logFlow(r.Context(), "%s %s 502 upstream certificate rejected: %v", r.Method, r.URL.Redacted(), verr.Err)
 			} else {
-				s.opts.Logf("%s %s 502 %v", r.Method, r.URL.Redacted(), err)
+				s.logFlow(r.Context(), "%s %s 502 %v", r.Method, r.URL.Redacted(), err)
 			}
 			w.WriteHeader(http.StatusBadGateway)
 		},
