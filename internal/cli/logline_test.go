@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -92,5 +94,25 @@ func TestR5_2_CapturedTrafficIsNeverWrittenToDisk(t *testing.T) {
 	}
 	if !strings.Contains(e.stdout.String(), "/secret/e 200") {
 		t.Fatalf("flows were not captured:\n%s", e.stdout)
+	}
+}
+
+func TestS3_3_LogModeRedactsTokensInQueryStrings(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upstream.Close()
+	e := newEnv(t)
+	e.origin = curl
+	addr, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--source", "all")
+	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: addr})}}
+	resp, err := c.Get(upstream.URL + "/cb?access_token=SECRETQ&page=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	waitUntil(t, "the flow line", func() bool { return strings.Contains(e.stdout.String(), "/cb?") })
+	e.sigs <- syscall.SIGTERM
+	waitExit(t, done)
+	if out := e.stdout.String(); strings.Contains(out, "SECRETQ") || !strings.Contains(out, "access_token=REDACTED") {
+		t.Fatalf("log line:\n%s", out)
 	}
 }

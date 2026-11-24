@@ -484,3 +484,25 @@ func TestS2_4_InsecureUpstreamNeedsDecryptAndOneExactHost(t *testing.T) {
 }
 
 func (e *env) newSimManager() (*sim.Manager, error) { return sim.New(e.fake, e.sims.Dir) }
+
+func TestSignalsAreCaughtBeforeAnythingChanges(t *testing.T) {
+	e := newEnv(t)
+	d := e.deps()
+	var callsWhenCaught = -1
+	d.Signals = func() (<-chan os.Signal, func()) {
+		callsWhenCaught = len(e.fake.Calls())
+		ch := make(chan os.Signal, 1)
+		ch <- syscall.SIGINT // Ctrl-C pressed during start-up
+		return ch, func() {}
+	}
+	if code := Main(context.Background(), []string{"start", "--port", freePort(t)}, d); code != ExitOK {
+		t.Fatalf("exit %d; stderr:\n%s", code, e.stderr)
+	}
+	if callsWhenCaught != 0 {
+		t.Fatalf("%d tool calls ran before signals were caught", callsWhenCaught)
+	}
+	wantWeb, _ := originalSettings()
+	if web, _ := e.mac.Settings(); !reflect.DeepEqual(web, wantWeb) {
+		t.Fatalf("an early Ctrl-C left the system proxy set: %+v", web)
+	}
+}

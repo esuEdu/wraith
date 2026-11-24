@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -21,18 +22,25 @@ import (
 // is terminated with a leaf for the host and the requests inside are forwarded.
 func (s *Server) tunnel(ctx context.Context, start time.Time, client net.Conn, buffered *bufio.Reader, up net.Conn, target string) {
 	v := verdictOf(ctx)
-	passThrough := func(r io.Reader) {
-		s.recordTunnel(ctx, start, target, http.StatusOK, "")
+	passThrough := func(r io.Reader, why string) {
+		s.recordTunnel(ctx, start, target, http.StatusOK, why)
 		splice(client, r, up)
 	}
-	if s.opts.Leaf == nil || !v.InSource || !v.Decrypt {
-		passThrough(buffered)
+	switch {
+	case s.opts.Leaf == nil:
+		passThrough(buffered, "")
+		return
+	case !v.InSource:
+		passThrough(buffered, "") // never recorded anyway (R1.3)
+		return
+	case !v.Decrypt:
+		passThrough(buffered, "passed through: this client is not decrypted (a Mac app, and the Mac does not trust the CA)")
 		return
 	}
 	br := bufio.NewReaderSize(buffered, recordHeaderLen+1<<14)
-	hello, ok := s.peekHello(client, br)
-	if !ok {
-		passThrough(br)
+	hello, why := s.peekHello(client, br)
+	if why != "" {
+		passThrough(br, "passed through: "+why)
 		return
 	}
 	host, _, _ := net.SplitHostPort(target)
@@ -41,34 +49,45 @@ func (s *Server) tunnel(ctx context.Context, start time.Time, client net.Conn, b
 		name = hello.serverName
 	}
 	name = strings.TrimSuffix(strings.ToLower(name), ".")
-	if s.isPinned(name) || (s.opts.Decrypt != nil && !s.opts.Decrypt(name)) {
-		passThrough(br)
+	if s.isPinned(name) {
+		passThrough(br, "passed through: the client rejected wraith's certificate earlier (pinned)")
+		return
+	}
+	if s.opts.Decrypt != nil && !s.opts.Decrypt(name) {
+		passThrough(br, "passed through: on no_decrypt")
 		return
 	}
 	_ = up.Close() // the forwarding transport dials and verifies the upstream itself
 	s.serveDecrypted(&peekedConn{Conn: client, r: br}, name, target, v)
 }
 
-// peekHello reads, without consuming, the client's first TLS record. It reports false
-// when the client speaks something else first, or nothing within ReadHeaderTimeout
-// (server-first protocols): those tunnels are spliced.
-func (s *Server) peekHello(client net.Conn, br *bufio.Reader) (clientHello, bool) {
+// peekHello reads, without consuming, the client's first TLS record. When the client
+// speaks something else first, or nothing within ReadHeaderTimeout (a server-first
+// protocol, or an idle preconnect), it returns why, and the tunnel is spliced.
+func (s *Server) peekHello(client net.Conn, br *bufio.Reader) (clientHello, string) {
 	_ = client.SetReadDeadline(time.Now().Add(s.opts.ReadHeaderTimeout))
 	defer func() { _ = client.SetReadDeadline(time.Time{}) }()
 	hdr, err := br.Peek(recordHeaderLen)
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return clientHello{}, fmt.Sprintf("the client sent nothing for %s", s.opts.ReadHeaderTimeout)
+	}
 	if err != nil {
-		return clientHello{}, false
+		return clientHello{}, "the client closed the tunnel before speaking"
 	}
 	n, err := helloRecordLen(hdr)
 	if err != nil {
-		return clientHello{}, false
+		return clientHello{}, "not TLS"
 	}
 	rec, err := br.Peek(recordHeaderLen + n)
 	if err != nil {
-		return clientHello{}, false
+		return clientHello{}, "incomplete TLS ClientHello"
 	}
 	hello, err := parseClientHello(rec)
-	return hello, err == nil
+	if err != nil {
+		return clientHello{}, "unreadable TLS ClientHello"
+	}
+	return hello, ""
 }
 
 func (s *Server) serveDecrypted(c net.Conn, name, target string, v Verdict) {

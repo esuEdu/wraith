@@ -147,3 +147,26 @@ func TestR5_1_BodiesAreCapturedUpToTheLimitAndStreamedWhole(t *testing.T) {
 		t.Fatalf("headers not captured: %v %v", f.ReqHeader, f.RespHeader)
 	}
 }
+
+func TestPassedThroughTunnelsSayWhy(t *testing.T) {
+	ts := upstreamServer(t, false, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok") })
+	e := startMITM(t, poolOf(ts.Certificate()), func(o *Options) {
+		o.ReadHeaderTimeout = 200 * time.Millisecond
+		o.Decrypt = func(host string) bool { return host != "127.0.0.1" }
+	})
+	// no_decrypt
+	if _, _, err := get(t, e.client(poolOf(ts.Certificate()), false), ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFlow(t, "for the no_decrypt tunnel", func(f store.Flow) bool { return strings.Contains(f.Err, "on no_decrypt") })
+
+	// an idle client: CONNECT, then silence
+	c, err := net.Dial("tcp", e.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	target := ts.Listener.Addr().String()
+	_, _ = io.WriteString(c, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n")
+	e.waitFlow(t, "for the idle tunnel", func(f store.Flow) bool { return strings.Contains(f.Err, "the client sent nothing for 200ms") })
+}
