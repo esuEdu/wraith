@@ -332,10 +332,15 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	popts := proxy.Options{Store: flows, Logf: a.notice}
 	sm, smErr := a.simManager()
 	macTrusted := false
+	var caFP *[32]byte
 	stopSimWatch := func() {}
 	if so.decrypt {
 		c, trusted, err := a.setupDecryption(h, cfg, so.insecure, &popts)
 		macTrusted = trusted
+		if c != nil {
+			fp := c.SHA256()
+			caFP = &fp
+		}
 		if err != nil {
 			for _, ln := range lns {
 				_ = ln.Close()
@@ -364,6 +369,10 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	router := route.New(rctx, a.d.Runner, cfg.Bypass, cfg.Interface)
 	rcancel()
 	live := newLiveState(h, cfg, src, flows, router)
+	if smErr == nil {
+		live.sims = sm
+	}
+	live.caFP, live.macTrusted = caFP, macTrusted
 	if popts.Leaf != nil {
 		popts.Decrypt = live.decrypt
 	}

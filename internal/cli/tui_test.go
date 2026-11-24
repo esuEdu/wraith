@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/esuEdu/wraith/internal/sim/simtest"
+	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/tui"
 )
 
@@ -67,6 +69,54 @@ func TestR1_5_SourceChangesApplyToNewConnections(t *testing.T) {
 	out := e.stdout.String()
 	if strings.Count(out, "[curl] CONNECT") != 1 {
 		t.Fatalf("want exactly the connection made after the change:\n%s", out)
+	}
+}
+
+func TestR1_5_PickerOffersBootedSimulatorsAndMacApps(t *testing.T) {
+	e := newEnv(t)
+	var acts tui.Actions
+	d := e.deps()
+	d.OnActions = func(a tui.Actions) { acts = a }
+	done := make(chan int, 1)
+	go func() { done <- Main(t.Context(), []string{"start", "--port", freePort(t), "--no-system-proxy"}, d) }()
+	<-e.ready
+	defer func() { e.sigs <- syscall.SIGTERM; <-done }()
+	acts.(liveActions).runningApps = func() ([]source.App, error) {
+		return []source.App{{Name: "Safari", Path: "/Applications/Safari.app"}}, nil
+	}
+
+	var sims []tui.Choice
+	waitUntil(t, "the booted simulator to be listed with the CA", func() bool {
+		list, err := acts.Choices()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sims = nil
+		for _, c := range list {
+			if strings.HasPrefix(c.Source, "simulator:") {
+				sims = append(sims, c)
+			}
+		}
+		return len(sims) == 1 && strings.HasSuffix(sims[0].Note, "CA installed")
+	})
+	if c := sims[0]; c.Source != "simulator:"+simtest.Booted || c.Label != "iPhone 18 Pro Max" {
+		t.Fatalf("simulator choice %+v", c)
+	}
+	list, _ := acts.Choices()
+	last := list[len(list)-1]
+	if last.Source != "app:Safari" || !strings.Contains(last.Note, "not decrypted until `wraith ca trust --mac`") {
+		t.Fatalf("app choice %+v", last)
+	}
+	if err := acts.SetSource(sims[0].Source); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeName(t *testing.T) {
+	for in, want := range map[string]string{"iOS-26-1": "iOS 26.1", "watchOS-11-0": "watchOS 11.0", "odd": "odd"} {
+		if got := runtimeName(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
 	}
 }
 

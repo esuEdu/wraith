@@ -89,7 +89,10 @@ kbd { font-size: 0.82em; border: 1px solid var(--line); border-bottom-width: 2px
 .terminal pre { margin: 0; padding: 14px 16px 16px; font-size: 0.78rem; line-height: 1.75; overflow-x: auto; }
 .t-dim { color: var(--term-dim); } .t-ok { color: var(--term-ok); } .t-warn { color: var(--term-warn); }
 .t-bad { color: var(--term-bad); } .t-acc { color: var(--term-accent); } .t-bold { font-weight: 600; color: #fff; }
-.t-sel { background: #1d3340; display: inline-block; width: 100%; }
+.t-sel { background: var(--term-fg); color: var(--term-bg); display: inline-block; width: calc(100% - 1ch); }
+.t-badge { background: var(--term-accent); color: var(--term-bg); font-weight: 700; }
+.t-mag { color: #d7a6e6; }
+.t-rule { display: inline-block; width: 100%; overflow: hidden; vertical-align: bottom; }
 
 /* Home */
 .hero { padding-block: 72px 56px; }
