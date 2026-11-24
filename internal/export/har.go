@@ -81,10 +81,11 @@ type harResponse struct {
 }
 
 type harContent struct {
-	Size     int64  `json:"size"`
-	MimeType string `json:"mimeType"`
-	Text     string `json:"text,omitempty"`
-	Encoding string `json:"encoding,omitempty"`
+	Size        int64  `json:"size"`
+	Compression int64  `json:"compression,omitempty"`
+	MimeType    string `json:"mimeType"`
+	Text        string `json:"text,omitempty"`
+	Encoding    string `json:"encoding,omitempty"`
 }
 
 type harTimings struct {
@@ -134,13 +135,27 @@ func harEntryFor(f store.Flow, r Redactor) harEntry {
 		},
 		Timings: harTimings{Wait: ms},
 	}
+	var notes []string
+	// HAR holds bodies decoded; the Content-Encoding header stays to say how they were sent.
+	decode := func(what string, b store.Body, h http.Header) store.Decoded {
+		d := store.Decode(b, h.Get("Content-Encoding"))
+		if d.Err != "" {
+			notes = append(notes, what+" body left as sent: "+d.Err)
+		}
+		return d
+	}
 	if f.ReqBody.Size > 0 {
-		text, enc := bodyText(f.ReqBody.Data)
+		d := decode("request", f.ReqBody, f.ReqHeader)
+		text, enc := bodyText(d.Data)
 		e.Request.PostData = &harPostData{MimeType: f.ReqHeader.Get("Content-Type"), Text: text, Encoding: enc}
 	}
-	e.Response.Content.Text, e.Response.Content.Encoding = bodyText(f.RespBody.Data)
+	resp := decode("response", f.RespBody, f.RespHeader)
+	e.Response.Content.Text, e.Response.Content.Encoding = bodyText(resp.Data)
+	if resp.Encoding != "" && !resp.Partial {
+		e.Response.Content.Size = int64(len(resp.Data))
+		e.Response.Content.Compression = e.Response.Content.Size - f.RespBody.Size
+	}
 
-	var notes []string
 	if f.Source != "" {
 		notes = append(notes, "source: "+f.Source)
 	}

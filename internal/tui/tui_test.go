@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"bytes"
+	"compress/gzip"
 	"net/http"
 	"strings"
 	"testing"
@@ -107,7 +109,7 @@ func TestFilterAndDetails(t *testing.T) {
 	}
 	press(m, "enter")
 	out := m.View().Content
-	for _, want := range []string{"GET https://api.shop.test/cart", "Accept: application/json", `{"items":[]}`, "route vpn"} {
+	for _, want := range []string{"GET https://api.shop.test/cart", "Accept: application/json", `"items": []`, "route vpn"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details miss %q:\n%s", want, out)
 		}
@@ -137,6 +139,33 @@ func TestR1_5_SourceChangesFromTheLiveView(t *testing.T) {
 	press(m, "enter")
 	if act.source != "app:Safari" || !strings.Contains(m.status, "must be all") {
 		t.Fatalf("invalid source accepted: %q %q", act.source, m.status)
+	}
+}
+
+func TestDetailsDecodePrettyPrintAndWrapBodies(t *testing.T) {
+	var z bytes.Buffer
+	zw := gzip.NewWriter(&z)
+	_, _ = zw.Write([]byte(`{"pedido":"A04FBEEB","itens":[1,2]}`))
+	_ = zw.Close()
+	long := strings.Repeat("abcdefghij", 30) // 300 characters, wider than the screen
+	act := &fakeActions{source: "simulator"}
+	m := New(act, "127.0.0.1:9090", []store.Flow{{
+		ID: 1, Kind: store.KindHTTP, Method: "POST", URL: "https://api.test/ordem", Status: 200,
+		ReqHeader:  http.Header{"Content-Type": {"text/plain"}},
+		ReqBody:    store.Body{Data: []byte(long), Size: int64(len(long))},
+		RespHeader: http.Header{"Content-Encoding": {"gzip"}, "Content-Type": {"application/json"}},
+		RespBody:   store.Body{Data: z.Bytes(), Size: int64(z.Len())},
+	}})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 60})
+	press(m, "enter")
+	out := m.View().Content
+	for _, want := range []string{"gzip, 35 decoded", `"pedido": "A04FBEEB",`, `"itens": [`, long[:79], long[79:158]} {
+		if !strings.Contains(out, want) {
+			t.Errorf("details miss %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "binary") || strings.Contains(out, "…") {
+		t.Errorf("a body was not decoded or was cut:\n%s", out)
 	}
 }
 
