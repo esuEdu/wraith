@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -18,15 +19,20 @@ import (
 // or when the first record is not a TLS ClientHello, or the host is pinned (R2.4) or
 // excluded by Decrypt (R2.5), the bytes are spliced untouched. Otherwise the TLS session
 // is terminated with a leaf for the host and the requests inside are forwarded.
-func (s *Server) tunnel(client net.Conn, buffered *bufio.Reader, up net.Conn, target string, v Verdict) {
+func (s *Server) tunnel(ctx context.Context, start time.Time, client net.Conn, buffered *bufio.Reader, up net.Conn, target string) {
+	v := verdictOf(ctx)
+	passThrough := func(r io.Reader) {
+		s.recordTunnel(ctx, start, target, http.StatusOK, "")
+		splice(client, r, up)
+	}
 	if s.opts.Leaf == nil || !v.InSource || !v.Decrypt {
-		splice(client, buffered, up)
+		passThrough(buffered)
 		return
 	}
 	br := bufio.NewReaderSize(buffered, recordHeaderLen+1<<14)
 	hello, ok := s.peekHello(client, br)
 	if !ok {
-		splice(client, br, up)
+		passThrough(br)
 		return
 	}
 	host, _, _ := net.SplitHostPort(target)
@@ -36,7 +42,7 @@ func (s *Server) tunnel(client net.Conn, buffered *bufio.Reader, up net.Conn, ta
 	}
 	name = strings.TrimSuffix(strings.ToLower(name), ".")
 	if s.isPinned(name) || (s.opts.Decrypt != nil && !s.opts.Decrypt(name)) {
-		splice(client, br, up)
+		passThrough(br)
 		return
 	}
 	_ = up.Close() // the forwarding transport dials and verifies the upstream itself
@@ -89,7 +95,9 @@ func (s *Server) serveDecrypted(c net.Conn, name, target string, v Verdict) {
 			return
 		}
 		ctx := context.WithValue(context.WithValue(r.Context(), targetKey{}, target), verdictKey{}, v)
-		s.tlsRP.ServeHTTP(w, r.WithContext(ctx))
+		r = r.WithContext(ctx)
+		host, _, _ := net.SplitHostPort(target)
+		s.tlsRP.ServeHTTP(w, s.beginFlow(r, "https://"+r.Host+r.URL.RequestURI(), host))
 	})
 	// net/http serves HTTP/2 itself when the *tls.Conn it accepts negotiated "h2".
 	l := newOneConnListener(tc)
@@ -151,15 +159,15 @@ func (s *Server) newTLSReverseProxy() *httputil.ReverseProxy {
 		FlushInterval: -1,
 		ErrorLog:      s.http.ErrorLog,
 		ModifyResponse: func(resp *http.Response) error {
-			s.logFlow(resp.Request.Context(), "%s %s %d %s%s", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode, resp.Proto, s.routeTag(resp.Request.URL.Host, false))
+			flowOf(resp.Request.Context()).response(resp)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			var verr *tls.CertificateVerificationError
 			if errors.As(err, &verr) {
-				s.logFlow(r.Context(), "%s %s 502%s upstream certificate rejected: %v", r.Method, r.URL.Redacted(), s.routeTag(r.URL.Host, false), verr.Err)
+				flowOf(r.Context()).failed(http.StatusBadGateway, "", "upstream certificate rejected: "+verr.Err.Error())
 			} else {
-				s.logFlow(r.Context(), "%s %s 502%s %v", r.Method, r.URL.Redacted(), s.routeTag(r.URL.Host, true), err)
+				flowOf(r.Context()).failed(http.StatusBadGateway, s.routeName(r.URL.Host, true), err.Error())
 			}
 			w.WriteHeader(http.StatusBadGateway)
 		},

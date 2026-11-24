@@ -154,3 +154,10 @@ func TestR1_1_SimulatorByNameMatchesFromTheFirstConnection(t *testing.T) {
 		t.Fatalf("first connection not matched by name:\n%s", e.stdout)
 	}
 }
+
+func caPool(t *testing.T, e *env) *x509.CertPool {
+	t.Helper()
+	p := x509.NewCertPool()
+	p.AppendCertsFromPEM([]byte(readCAPEM(t, e)))
+	return p
+}
