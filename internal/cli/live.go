@@ -40,6 +40,7 @@ type liveState struct {
 	caFP        *[32]byte
 	macTrusted  bool
 	runningApps func() ([]source.App, error)
+	devs        *devices // nil without --device
 
 	src       atomic.Pointer[source.Source]
 	noDecrypt atomic.Pointer[[]string]
@@ -123,6 +124,12 @@ func (l liveActions) Choices() ([]tui.Choice, error) {
 				note += " · not decrypted until `wraith ca trust --mac`"
 			}
 			out = append(out, tui.Choice{Source: "app:" + a.Name, Label: a.Name, Note: note})
+		}
+	}
+	if l.devs != nil {
+		out = append(out, tui.Choice{Source: "device", Label: "device", Note: "every iPhone or iPad set up with the QR code (d)"})
+		for _, ip := range l.devs.Allowed() {
+			out = append(out, tui.Choice{Source: "device:" + ip, Label: ip, Note: "device on this Wi-Fi"})
 		}
 	}
 	return out, errors.Join(errs...)

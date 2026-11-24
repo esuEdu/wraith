@@ -168,7 +168,7 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd(), a.doctorCmd(), a.exportCmd())
+	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd(), a.doctorCmd(), a.exportCmd(), a.devicesCmd())
 	for _, p := range []struct{ name, short, milestone string }{} {
 		root.AddCommand(&cobra.Command{
 			Use:                p.name,
@@ -224,6 +224,8 @@ func (a *app) startCmd() *cobra.Command {
 		jsonLog       bool
 		noDecrypt     bool
 		insecure      []string
+		device        bool
+		allowDevices  []string
 	)
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -254,12 +256,22 @@ func (a *app) startCmd() *cobra.Command {
 			if len(insecure) > 0 && noDecrypt {
 				return fail(ExitUsage, "--insecure-upstream does not apply with --no-decrypt")
 			}
-			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: !noDecrypt, insecure: insecure, logMode: logMode, jsonLog: jsonLog})
+			allow, err := parseDeviceIPs(allowDevices)
+			if err != nil {
+				return fail(ExitUsage, "%v", err)
+			}
+			device = device || len(allow) > 0
+			if device && !f.Changed("source") {
+				src := "device"
+				o.Source = &src
+			}
+			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: !noDecrypt, insecure: insecure,
+				logMode: logMode, jsonLog: jsonLog, device: device, allowDevices: allow})
 		},
 	}
 	f := cmd.Flags()
 	f.IntVar(&port, "port", 9090, "proxy port on 127.0.0.1 and ::1")
-	f.StringVar(&source, "source", "simulator", "capture source: all, simulator[:udid|name], app:<name|bundle-id>, pid:<pid>")
+	f.StringVar(&source, "source", "simulator", "capture source: all, simulator[:udid|name], app:<name|bundle-id>, pid:<pid>, device[:ip]")
 	f.StringVar(&iface, "iface", "auto", "physical interface for bypassed hosts: auto, or en0, en1, ...")
 	f.IntVar(&maxFlows, "max-flows", 5000, "flows kept in memory")
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
@@ -268,6 +280,8 @@ func (a *app) startCmd() *cobra.Command {
 	f.BoolVar(&jsonLog, "json", false, "with --log: one JSON object per line")
 	f.BoolVar(&noDecrypt, "no-decrypt", false, "pass HTTPS through without decrypting it")
 	f.StringArrayVar(&insecure, "insecure-upstream", nil, "do not verify this host's certificate, e.g. a local dev server (repeatable)")
+	f.BoolVar(&device, "device", false, "also take traffic from physical devices on this Wi-Fi, set up by scanning a QR code (source device unless --source is given)")
+	f.StringArrayVar(&allowDevices, "allow-device", nil, "allow this device's IP address without the QR code; implies --device (repeatable)")
 	return cmd
 }
 
@@ -277,6 +291,8 @@ type startOpts struct {
 	noSystemProxy bool
 	decrypt       bool
 	insecure      []string
+	device        bool     // listen on the local network for devices too (S2.6)
+	allowDevices  []net.IP // devices allowed without asking
 }
 
 func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err error) {
@@ -333,13 +349,14 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	sm, smErr := a.simManager()
 	macTrusted := false
 	var caFP *[32]byte
+	var caPEM []byte
 	stopSimWatch := func() {}
 	if so.decrypt {
 		c, trusted, err := a.setupDecryption(h, cfg, so.insecure, &popts)
 		macTrusted = trusted
 		if c != nil {
 			fp := c.SHA256()
-			caFP = &fp
+			caFP, caPEM = &fp, c.CertPEM()
 		}
 		if err != nil {
 			for _, ln := range lns {
@@ -368,7 +385,52 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
 	router := route.New(rctx, a.d.Runner, cfg.Bypass, cfg.Interface)
 	rcancel()
+	var devs *devices
+	devWarn := ""
+	useTUI := !so.logMode && !so.jsonLog && a.d.IsTerminal()
+	if so.device {
+		ifi, err := router.Iface()
+		var subnet *net.IPNet
+		if err == nil {
+			subnet, err = deviceNet(ifi.Name)
+		}
+		var ln net.Listener
+		if err == nil {
+			ln, err = proxy.ListenDevice(subnet.IP, cfg.Port)
+		}
+		if err != nil {
+			for _, ln := range lns {
+				_ = ln.Close()
+			}
+			return fail(ExitRuntime, "--device: %v", err)
+		}
+		lns = append(lns, ln)
+		devAddr := net.JoinHostPort(subnet.IP.String(), fmt.Sprint(cfg.Port))
+		known, err := loadDevices(h)
+		if err != nil {
+			a.info("warning: remembered devices: %v; scan the QR code again", err)
+		}
+		devs = newDevices(devAddr, subnet, so.allowDevices, known,
+			func(list []rememberedDevice) error { return saveDevices(h, list) },
+			func(ip, why string) { a.notice("allowed device %s (%s)", ip, why) }, a.notice)
+		if len(known) > 0 {
+			a.info("devices: %d remembered device(s) get in without the QR code; `wraith devices forget` removes them", len(known))
+		}
+		popts.Admit, popts.Unlock, popts.CACert = devs.Admit, devs.Unlock, caPEM
+		exe, _ := os.Executable()
+		devWarn = firewallWarning(ctx, a.d.Runner, exe)
+		if !useTUI {
+			a.info("devices: scan this with the iPhone's Camera, or open %s on it:", devs.SetupURL())
+			for _, l := range tui.QR(devs.SetupURL()) {
+				_, _ = fmt.Fprintln(a.d.Stderr, "  "+l)
+			}
+		}
+		if devWarn != "" {
+			a.info("warning: %s", devWarn)
+		}
+	}
 	live := newLiveState(h, cfg, src, flows, router)
+	live.devs = devs
 	if smErr == nil {
 		live.sims = sm
 	}
@@ -388,7 +450,6 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
-	useTUI := !so.logMode && !so.jsonLog && a.d.IsTerminal()
 	printed, stopPrinting := (<-chan struct{})(closedChan()), func() {}
 	if !useTUI {
 		printed, stopPrinting = a.printFlows(flows, so.jsonLog, export.NewRedactor(cfg.Export.RedactHeaders))
@@ -458,7 +519,11 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	var ui *tea.Program
 	uiDone := make(chan struct{})
 	if useTUI {
-		ui = a.runTUI(ctx, actions, addr, flows, cfg.Theme, uiDone)
+		var setup tui.DeviceSetup
+		if devs != nil {
+			setup = tui.DeviceSetup{Addr: devs.addr, URL: devs.SetupURL(), Warning: devWarn}
+		}
+		ui = a.runTUI(ctx, actions, addr, setup, flows, cfg.Theme, uiDone)
 	}
 	if a.d.Ready != nil {
 		a.d.Ready(addr)
@@ -608,6 +673,13 @@ func (a *app) classifier(cur *atomic.Pointer[source.Source], sm *sim.Manager, ma
 		if !ok1 || !ok2 {
 			return proxy.Verdict{}
 		}
+		if !proxy.FromThisMac(c, l) { // a device the user allowed (S2.6): no process on this Mac
+			o := source.Origin{Device: c.IP.String()}
+			if !cur.Load().Matches(o, nil) {
+				return proxy.Verdict{}
+			}
+			return proxy.Verdict{InSource: true, Decrypt: true, Label: o.Label()}
+		}
 		o, err := lookup(ctx, c.Port, l.Port)
 		if err != nil || !cur.Load().Matches(o, names.name) { // R1.5: the source as of now
 			return proxy.Verdict{} // R1.3, R1.4: outside the source, untouched and unseen
@@ -687,9 +759,10 @@ func (a *app) printFlows(flows *store.Store, asJSON bool, r export.Redactor) (do
 }
 
 // runTUI starts the live view; done closes when it exits (q, ctrl+c, or Quit).
-func (a *app) runTUI(ctx context.Context, actions tui.Actions, addr string, flows *store.Store, theme string, done chan struct{}) *tea.Program {
+func (a *app) runTUI(ctx context.Context, actions tui.Actions, addr string, setup tui.DeviceSetup, flows *store.Store, theme string, done chan struct{}) *tea.Program {
 	ch, stopSub := flows.Subscribe(4096) // before the snapshot: the model drops repeats
 	model := tui.New(actions, addr, flows.Flows())
+	model.SetDevices(setup)
 	if err := model.SetTheme(theme); err != nil {
 		a.info("warning: %v; using %s", err, tui.DefaultTheme)
 	}

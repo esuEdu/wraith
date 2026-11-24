@@ -245,3 +245,34 @@ func BenchmarkOwnerLookup(b *testing.B) {
 		}
 	}
 }
+
+func TestDeviceSources(t *testing.T) {
+	phone := Origin{Device: "192.168.0.23"}
+	mac := Origin{PID: 7, Chain: []Process{{PID: 7, Path: "/usr/bin/curl"}}}
+	for _, c := range []struct {
+		src        string
+		phone, mac bool
+	}{
+		{"device", true, false},
+		{"device:192.168.0.23", true, false},
+		{"device:192.168.0.99", false, false},
+		{"all", true, true},
+		{"simulator", false, false},
+		{"app:curl", false, true},
+		{"pid:7", false, true},
+	} {
+		s, err := Parse(c.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.String() != c.src || s.Matches(phone, nil) != c.phone || s.Matches(mac, nil) != c.mac {
+			t.Errorf("%s: string %q, matches phone %v mac %v", c.src, s, s.Matches(phone, nil), s.Matches(mac, nil))
+		}
+	}
+	if _, err := Parse("device:iphone"); err == nil {
+		t.Error("device:iphone accepted")
+	}
+	if phone.Label() != "device 192.168.0.23" {
+		t.Errorf("label %q", phone.Label())
+	}
+}

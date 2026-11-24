@@ -39,6 +39,7 @@ type Origin struct {
 	Chain []Process // the connecting process first, then its parents up to launchd
 
 	SimUDID  string // set when the process runs inside a simulator (R1.2)
+	Device   string // the address of a physical device on the network (S2.6); no process then
 	AppPath  string // outermost .app bundle on the path, if any
 	BundleID string
 	AppName  string // the bundle's name without .app
@@ -50,6 +51,8 @@ func (o Origin) Simulator() bool { return o.SimUDID != "" }
 // Label is a short name for logs: the app, or the executable's name.
 func (o Origin) Label() string {
 	switch {
+	case o.Device != "":
+		return "device " + o.Device
 	case o.AppName != "":
 		return o.AppName
 	case len(o.Chain) > 0:

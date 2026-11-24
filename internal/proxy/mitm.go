@@ -49,8 +49,8 @@ func (s *Server) tunnel(ctx context.Context, start time.Time, client net.Conn, b
 		name = hello.serverName
 	}
 	name = strings.TrimSuffix(strings.ToLower(name), ".")
-	if s.isPinned(name) {
-		passThrough(br, "passed through: the client rejected wraith's certificate earlier (pinned)")
+	if s.isPinned(v, name) {
+		passThrough(br, "passed through: this client rejected wraith's certificate for it a moment ago (pinned, or the CA is not trusted yet); it is tried again soon")
 		return
 	}
 	if s.opts.Decrypt != nil && !s.opts.Decrypt(name) {
@@ -98,13 +98,19 @@ func (s *Server) serveDecrypted(c net.Conn, name, target string, v Verdict) {
 		MinVersion:     tls.VersionTLS12,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), s.opts.ReadHeaderTimeout)
+	start := time.Now()
 	err := tc.HandshakeContext(ctx)
 	cancel()
 	if err != nil {
-		// The client refused wraith's certificate: it pins, or does not trust the CA.
-		s.markPinned(name)
-		s.logFlow(vctx, "TLS %s: client rejected wraith's certificate (%v); passing %s through from now on", name, err, name)
 		_ = tc.Close()
+		// Only a TLS alert from the client is a rejection (it pins, or does not trust the
+		// CA yet); a client that just closes, or says nothing, is not.
+		var oe *net.OpError
+		if !errors.As(err, &oe) || oe.Op != "remote error" {
+			return
+		}
+		wait := s.markPinned(v, name)
+		s.recordTunnel(vctx, start, target, 0, fmt.Sprintf("rejected wraith's certificate (%v): the app pins, or the device does not trust the wraith CA yet; passed through for %s, then tried again", oe.Err, wait))
 		return
 	}
 
@@ -220,26 +226,50 @@ func (t *hostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.secure.RoundTrip(r)
 }
 
-func (s *Server) isPinned(host string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.pinned[host]
+// pinBackoff is how long a host is passed through for a client after it rejected
+// wraith's certificate for the 1st, 2nd and 3rd time (R2.4). The first waits are short
+// because the usual cause is a device that does not trust the CA yet; a host that keeps
+// rejecting it pins its certificate, and stays passed through.
+var pinBackoff = []time.Duration{30 * time.Second, 5 * time.Minute, 24 * time.Hour}
+
+type pin struct {
+	strikes int
+	until   time.Time
 }
 
-func (s *Server) markPinned(host string) {
+// pinKey is per client, so one app or device that pins a host does not stop wraith from
+// decrypting it for the others.
+func pinKey(v Verdict, host string) string { return v.Label + "\x00" + host }
+
+func (s *Server) isPinned(v Verdict, host string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pinned[host] = true
+	return s.now().Before(s.pinned[pinKey(v, host)].until)
 }
 
-// Pinned returns the hosts switched to pass-through this session because a client
-// rejected wraith's certificate (R2.4), sorted.
+// markPinned records a rejection and returns how long the host is now passed through.
+func (s *Server) markPinned(v Verdict, host string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pinned[pinKey(v, host)]
+	wait := pinBackoff[min(p.strikes, len(pinBackoff)-1)]
+	p.strikes++
+	p.until = s.now().Add(wait)
+	s.pinned[pinKey(v, host)] = p
+	return wait
+}
+
+// Pinned returns the hosts some client is passing through now because it rejected
+// wraith's certificate (R2.4), sorted.
 func (s *Server) Pinned() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	hosts := make([]string, 0, len(s.pinned))
-	for h := range s.pinned {
-		hosts = append(hosts, h)
+	var hosts []string
+	for k, p := range s.pinned {
+		_, h, _ := strings.Cut(k, "\x00")
+		if s.now().Before(p.until) && !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
 	}
 	slices.Sort(hosts)
 	return hosts

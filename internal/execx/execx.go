@@ -31,7 +31,9 @@ var DefaultTools = map[string]string{
 	"sqlite3":      "/usr/bin/sqlite3",   // simulator trust stores (wraith ca remove)
 	"plutil":       "/usr/bin/plutil",    // app bundle ids (source filter)
 	"ipconfig":     "/usr/sbin/ipconfig", // an interface's DHCP DNS server (bypass)
-	"route":        "/sbin/route",        // scoped default routes (bypass)
+	// whether the firewall keeps devices out (--device); read-only queries
+	"socketfilterfw": "/usr/libexec/ApplicationFirewall/socketfilterfw",
+	"route":          "/sbin/route", // scoped default routes (bypass)
 }
 
 const (

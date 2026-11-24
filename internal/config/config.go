@@ -71,7 +71,7 @@ const DefaultYAML = `# wraith configuration. Command-line flags override these v
 # Docs: https://github.com/esuEdu/wraith
 
 port: 9090                  # proxy port on 127.0.0.1 and ::1
-source: simulator           # all | simulator | simulator:<udid|name> | app:<name|bundle-id> | pid:<pid>
+source: simulator           # all | simulator | simulator:<udid|name> | app:<name|bundle-id> | pid:<pid> | device | device:<ip>
 interface: auto             # physical interface for bypassed hosts: auto, or en0, en1, ...
 
 capture:
@@ -230,8 +230,13 @@ func (c *Config) normalize() error {
 func validSource(s string) error {
 	kind, arg, hasArg := strings.Cut(s, ":")
 	switch {
-	case s == "all" || s == "simulator":
+	case s == "all" || s == "simulator" || s == "device":
 		return nil
+	case kind == "device" && hasArg:
+		if net.ParseIP(arg) != nil {
+			return nil
+		}
+		return fmt.Errorf("%q: device must be an IP address", s)
 	case kind == "simulator" && hasArg && arg != "":
 		return nil
 	case kind == "app" && hasArg && arg != "":
@@ -242,7 +247,7 @@ func validSource(s string) error {
 		}
 		return fmt.Errorf("%q: pid must be a positive number", s)
 	}
-	return fmt.Errorf("%q must be all, simulator, simulator:<udid|name>, app:<name|bundle-id> or pid:<pid>", s)
+	return fmt.Errorf("%q must be all, simulator, simulator:<udid|name>, app:<name|bundle-id>, pid:<pid>, device or device:<ip>", s)
 }
 
 // NormalizeHostPattern checks a bypass or no-decrypt entry and returns it lower-cased

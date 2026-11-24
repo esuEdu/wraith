@@ -55,6 +55,13 @@ type FlowMsg store.Flow
 // NoticeMsg shows a message from the proxy or the simulator watcher in the status line.
 type NoticeMsg string
 
+// DeviceSetup is how an iPhone or iPad reaches wraith (S2.6), for the setup panel.
+type DeviceSetup struct {
+	Addr    string // ip:port, the proxy the device sets
+	URL     string // the setup link with its key, shown as a QR code
+	Warning string // why devices may not get through, e.g. the firewall
+}
+
 // choicesMsg delivers what Actions.Choices found.
 type choicesMsg struct {
 	list []Choice
@@ -83,6 +90,9 @@ type Model struct {
 	pick   picker
 	labels map[string]string // source → the name the picker showed for it
 
+	dev     DeviceSetup // zero without --device
+	showDev bool        // the setup panel is open (d)
+
 	t             *theme
 	width, height int
 	status        string
@@ -106,6 +116,9 @@ func (m *Model) SetTheme(name string) error {
 	m.t, m.detail.lines = t, nil
 	return nil
 }
+
+// SetDevices turns on the device setup panel (d).
+func (m *Model) SetDevices(d DeviceSetup) { m.dev = d }
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd { return nil }
@@ -179,6 +192,8 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "d":
+		m.showDev = !m.showDev && m.dev.Addr != ""
 	case "down", "j":
 		m.move(1)
 	case "up", "k":
@@ -198,7 +213,9 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode, m.input = modeFilter, m.filter
 	case "esc":
-		if m.filter != "" {
+		if m.showDev {
+			m.showDev = false
+		} else if m.filter != "" {
 			m.filter = ""
 			m.refilter()
 		}

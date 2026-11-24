@@ -38,6 +38,7 @@
           <li><a href="#install">Install</a></li>
           <li><a href="#quick-start">Quick start</a></li>
           <li><a href="#sources">Capture sources</a></li>
+          <li><a href="#devices">iPhone and iPad</a></li>
           <li><a href="#decryption">HTTPS and the CA</a></li>
           <li><a href="#bypass">VPN bypass</a></li>
           <li><a href="#live-view">Live view</a></li>
@@ -113,13 +114,37 @@ rm -rf ~/.wraith</pre>
             <tr><td><code>simulator:iPhone 17</code><br><code>simulator:&lt;UDID&gt;</code></td><td>One simulator, by device name or UDID.</td></tr>
             <tr><td><code>app:Safari</code><br><code>app:com.example.shop</code></td><td>One app, by name or bundle id; also an app inside a simulator. A command-line tool matches by its executable name, e.g. <code>app:curl</code>.</td></tr>
             <tr><td><code>pid:4242</code></td><td>One process and every process it started.</td></tr>
-            <tr><td><code>all</code></td><td>Everything that uses the system proxy.</td></tr>
+            <tr><td><code>device</code><br><code>device:192.168.0.23</code></td><td>Every iPhone or iPad you allowed, or one by its IP address. Needs <code>--device</code>; see <a href="#devices">iPhone and iPad</a>.</td></tr>
+            <tr><td><code>all</code></td><td>Everything that uses the system proxy, and every device you allowed.</td></tr>
           </tbody>
         </table></div>
         <h3>How wraith knows who connected</h3>
         <p>For each new connection, wraith asks the kernel which process owns the client's socket, then walks its parent processes. A process running under <code>launchd_sim</code> belongs to a simulator, whose UDID comes from <code>launchd_sim</code>'s arguments. An app is the outermost <code>.app</code> bundle on the process's own path, so Chrome's network helper (a bundle inside Chrome.app) counts as Chrome. A connection whose process cannot be identified is outside every source.</p>
         <p>Pages loaded in a simulator's Safari or in a web view come from <code>com.apple.WebKit.Networking</code>, not from the app itself, and are labelled that way.</p>
         <p>Change the source of a running wraith with <kbd>s</kbd> in the live view. It applies to new connections.</p>
+      </section>
+
+      <section id="devices">
+        <h2>iPhone and iPad</h2>
+        <p>A physical device on the same Wi-Fi as your Mac can use wraith as its proxy. Its traffic then leaves through your Mac, so it goes through your Mac's VPN, and the bypass list applies to it too.</p>
+        <pre class="block">wraith start --device</pre>
+        <p>wraith also listens on your Mac's Wi-Fi address, for example <code>192.168.0.12:9090</code>, and the live view shows a QR code with the steps (<kbd>d</kbd> shows it again later). The source is <code>device</code> unless you give <code>--source</code>.</p>
+        <ol>
+          <li>Scan the QR code with the iPhone's Camera and open the link. The device is now allowed, and the page shows the rest.</li>
+          <li>Tap <strong>Download the certificate</strong>, install it from Settings › Profile Downloaded, then turn on full trust for <strong>wraith CA</strong> in Settings › General › About › Certificate Trust Settings. Once per device.</li>
+          <li>In Settings › Wi-Fi, tap ⓘ next to the network, then Configure Proxy › Manual, and enter the server and port the page shows.</li>
+        </ol>
+        <p>Turn the proxy off on the device when wraith is not running, or it loses its connection.</p>
+        <h3>Who can connect</h3>
+        <p>The QR code carries a key that is new each time wraith starts. A device on your Mac's network that opens the link with it is allowed, and remembered: on later runs it gets in without the code. wraith remembers it by its IP address on that network, in <code>~/.wraith/devices.json</code> (macOS does not show wraith the network's hardware addresses), and forgets it after 30 days unseen. At a new address, it needs the QR code again. <code>wraith devices list</code> shows the remembered devices and <code>wraith devices forget &lt;ip|all&gt;</code> removes them. Another device that later gets a remembered address from the router could use wraith too; forget devices you no longer use.</p>
+        <p>wraith listens on that one Wi-Fi address only, never on every address, and only while <code>--device</code> is on. It hands the CA certificate only to allowed devices; its private key never leaves the Mac.</p>
+        <h3>When it does not work</h3>
+        <ul>
+          <li>The device and the Mac must be on the same network. Guest and many office networks keep devices apart; a phone hotspot or home Wi-Fi works.</li>
+          <li>If the macOS firewall blocks wraith, the live view says so: set wraith to “Allow incoming connections” in System Settings › Network › Firewall › Options.</li>
+          <li>A VPN on the device can send its traffic away from your Wi-Fi; turn it off while you use wraith.</li>
+          <li>Apps that pin their certificates fail when decrypted. Add their hosts to <code>no_decrypt</code> (<kbd>n</kbd> in the live view).</li>
+        </ul>
       </section>
 
       <section id="decryption">
@@ -136,7 +161,7 @@ wraith ca untrust --mac    # undo</pre>
         <p>A tunnel that wraith passes through shows as <code>tunnel</code> in the log, with the reason:</p>
         <ul>
           <li><strong>on no_decrypt</strong>: the host matches the <code>no_decrypt</code> list (by default <code>*.apple.com</code> and <code>*.icloud.com</code>). Add a host from the live view with <kbd>n</kbd>.</li>
-          <li><strong>pinned</strong>: the client rejected wraith's certificate earlier (certificate pinning, or a client that does not trust the CA). wraith passes that host through for the rest of the session; the first attempt fails.</li>
+          <li><strong>certificate rejected</strong>: the client refused wraith's certificate, because the app pins its certificates or the device does not trust the wraith CA yet. That attempt fails, and wraith passes the host through for that client for 30 seconds, then tries again; after a third refusal it stops trying for the session. So a device you have just set up is decrypted again within half a minute, and an app that pins fails only a few times. Add a pinned host to <code>no_decrypt</code> (<kbd>n</kbd>) to pass it through from the start.</li>
           <li><strong>the client sent nothing</strong>: the client opened a tunnel and stayed silent for 10 seconds, usually a browser's preconnect.</li>
           <li><strong>not TLS</strong>: another protocol over CONNECT, such as SSH.</li>
           <li><strong>this client is not decrypted</strong>: a Mac app while the Mac does not trust the CA.</li>
@@ -234,6 +259,7 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
           <thead><tr><th>File</th><th>What it is</th></tr></thead>
           <tbody>
             <tr><td><code>config.yaml</code></td><td>Settings, above.</td></tr>
+            <tr><td><code>devices.json</code></td><td>iPhones and iPads set up with <code>--device</code>: IP address, network, kind, when last seen (0600).</td></tr>
             <tr><td><code>ca/ca.pem</code>, <code>ca/ca.key</code></td><td>The CA certificate and its private key (0600).</td></tr>
             <tr><td><code>state.json</code></td><td>Your saved proxy settings, while wraith has changed them.</td></tr>
             <tr><td><code>wraith.lock</code></td><td>Keeps one instance running at a time.</td></tr>
@@ -253,6 +279,8 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
             <tr><td><code>--port</code></td><td><code>9090</code></td><td>Port on 127.0.0.1 and ::1.</td></tr>
             <tr><td><code>--no-system-proxy</code></td><td></td><td>Listen only; leave the system proxy alone.</td></tr>
             <tr><td><code>--no-decrypt</code></td><td></td><td>Pass HTTPS through without decrypting it.</td></tr>
+            <tr><td><code>--device</code></td><td></td><td>Also take traffic from iPhones and iPads on this Wi-Fi, set up by scanning a QR code. See <a href="#devices">iPhone and iPad</a>.</td></tr>
+            <tr><td><code>--allow-device &lt;ip&gt;</code></td><td></td><td>Allow this device without the QR code; implies <code>--device</code> (repeatable).</td></tr>
             <tr><td><code>--insecure-upstream &lt;host&gt;</code></td><td></td><td>Do not verify this host's certificate (repeatable). For local dev servers.</td></tr>
             <tr><td><code>--iface</code></td><td><code>auto</code></td><td>Physical interface for bypassed hosts.</td></tr>
             <tr><td><code>--log</code></td><td></td><td>One line per flow instead of the live view.</td></tr>
@@ -267,6 +295,8 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
           <tbody>
             <tr><td><code>wraith stop</code></td><td>Stop a running wraith, or restore settings a crash left behind. Safe to run any time.</td></tr>
             <tr><td><code>wraith doctor [--host h]</code></td><td>Check config, instance, system proxy, CA, Mac trust, simulators, interface and bypass.</td></tr>
+            <tr><td><code>wraith devices list</code></td><td>Show the iPhones and iPads remembered by <code>wraith start --device</code>.</td></tr>
+            <tr><td><code>wraith devices forget &lt;ip|all&gt;…</code></td><td>Forget devices; they need the QR code again. Stop wraith first.</td></tr>
             <tr><td><code>wraith bypass add &lt;host&gt;…</code></td><td>Add hosts or <code>*.domain</code> patterns to the bypass list.</td></tr>
             <tr><td><code>wraith bypass rm &lt;host&gt;…</code></td><td>Remove entries.</td></tr>
             <tr><td><code>wraith bypass list</code></td><td>Show the list and the interface it uses.</td></tr>
@@ -295,7 +325,7 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
       <section id="security">
         <h2>Security and privacy</h2>
         <ul>
-          <li>wraith listens on 127.0.0.1 and ::1 only and closes any other peer before reading from it.</li>
+          <li>wraith listens on 127.0.0.1 and ::1 only and closes any other peer before reading from it. With <code>--device</code> it also listens on the Mac's Wi-Fi address, and lets in only devices on that network that opened the setup link from its QR code.</li>
           <li>It runs as you and refuses to run as root; macOS asks for permissions itself when it needs to.</li>
           <li>Captured traffic stays in memory and is gone when wraith stops. Only exports you ask for write files, mode 0600, redacted by default.</li>
           <li>Log lines never contain header values or bodies.</li>

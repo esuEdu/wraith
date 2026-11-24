@@ -45,6 +45,13 @@ func (m *Model) render() string {
 		m.offset = m.cursor - rows + 1
 	}
 	lines := 0
+	if m.dev.Addr != "" && (m.showDev || len(m.flows) == 0) {
+		panel := m.devicePanel(rows)
+		b.WriteString(strings.Join(panel, "\n") + "\n")
+		b.WriteString(strings.Repeat("\n", max(rows-len(panel), 0)))
+		b.WriteString(m.rule() + "\n" + m.footer())
+		return b.String()
+	}
 	if len(m.shown) == 0 {
 		msg := " waiting for traffic from " + m.sourceName() + "…"
 		if m.filter != "" {
@@ -69,6 +76,9 @@ func (m *Model) header() string {
 	sep := t.dim.Render(" · ")
 	h := t.badge.Render(" wraith ") + " " + t.muted.Render(m.listen) + sep +
 		t.muted.Render("capturing ") + t.accentBold.Render(m.sourceName()) + sep + t.muted.Render(fmt.Sprintf("%d flows", len(m.flows)))
+	if m.dev.Addr != "" {
+		h += sep + t.muted.Render("devices ") + m.dev.Addr
+	}
 	if m.filter != "" {
 		h += sep + t.muted.Render("filter ") + t.accentBold.Render(m.filter) + t.dim.Render(fmt.Sprintf(" (%d shown)", len(m.shown)))
 	}
@@ -105,14 +115,43 @@ func (m *Model) row(f store.Flow, sel bool) string {
 	}
 	if sel {
 		line := strings.Join(append(cols, f.URL), " ")
+		if r := tunnelReason(f); r != "" {
+			line += "  " + r
+		}
 		line = clip(line, m.width-1)
 		line += strings.Repeat(" ", max(m.width-1-lipgloss.Width(line), 0))
 		return t.mark.Render("▌") + t.selected.Render(line)
 	}
 	host, rest := splitURL(f.URL)
+	why := ""
+	if r := tunnelReason(f); r != "" {
+		why = "  " + stStyle.Render(r)
+	}
 	line := " " + t.dim.Render(cols[0]) + " " + cols[1] + " " + stStyle.Render(cols[2]) + " " +
-		t.method(f.Method).Render(cols[3]) + " " + routeStyle.Render(cols[4]) + " " + host + t.muted.Render(rest)
+		t.method(f.Method).Render(cols[3]) + " " + routeStyle.Render(cols[4]) + " " + host + t.muted.Render(rest) + why
 	return clip(line, m.width)
+}
+
+// tunnelReason is why a tunnel was not decrypted, in a word or two for the list; the
+// details have the whole sentence.
+func tunnelReason(f store.Flow) string {
+	if f.Kind != store.KindTunnel || f.Err == "" {
+		return ""
+	}
+	for _, r := range []struct{ has, says string }{
+		{"rejected wraith's certificate (", "certificate rejected"},
+		{"a moment ago", "rejected earlier, retried soon"},
+		{"no_decrypt", "no_decrypt"},
+		{"sent nothing", "idle"},
+		{"closed the tunnel", "closed"},
+		{"not TLS", "not TLS"},
+		{"Mac does not trust", "Mac app, CA not trusted"},
+	} {
+		if strings.Contains(f.Err, r.has) {
+			return r.says
+		}
+	}
+	return ""
 }
 
 // splitURL cuts a URL after its host, so the path can be drawn fainter.
@@ -139,6 +178,9 @@ func (m *Model) footer() string {
 	// Most useful first; on a narrow screen the ones before "q quit" go, from the end.
 	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "e", "export",
 		"b", "bypass", "n", "no-decrypt", "x", "clear", "↑↓", "move", "q", "quit"}
+	if m.dev.Addr != "" {
+		keys = append(keys[:4], append([]string{"d", "device"}, keys[4:]...)...)
+	}
 	h := t.hints(keys...)
 	for lipgloss.Width(h) > m.width && len(keys) > 4 {
 		keys = append(keys[:len(keys)-4], keys[len(keys)-2:]...)
@@ -185,7 +227,10 @@ func (m *Model) detailTop(f store.Flow) []string {
 		}
 	}
 	top = append(top, " "+strings.Join(meta, sep))
-	if f.Err != "" {
+	switch {
+	case f.Err != "" && f.Kind == store.KindTunnel && f.Status == 200:
+		top = append(top, t.muted.Render(" why: "+f.Err))
+	case f.Err != "":
 		top = append(top, t.bad.Render(" error: "+f.Err))
 	}
 	if f.Kind == store.KindHTTP {
