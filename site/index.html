@@ -32,8 +32,8 @@
     <div class="container">
       <div class="copy-col">
         <p class="eyebrow">Terminal proxy for macOS</p>
-        <h1>See your simulator's HTTPS. Route chosen hosts around your VPN.</h1>
-        <p class="lead">wraith decrypts traffic from the iOS Simulator, one Mac app or one process, and passes everything else through untouched. Hosts you name skip the VPN and go out on Wi-Fi or Ethernet. All of it from the terminal.</p>
+        <h1>See your iOS app's HTTPS. Route chosen hosts around your VPN.</h1>
+        <p class="lead">wraith decrypts traffic from the iOS Simulator, an iPhone or iPad on your Wi-Fi, one Mac app or one process, and passes everything else through untouched. Hosts you name skip the VPN and go out on Wi-Fi or Ethernet. All of it from the terminal.</p>
         <div class="install">
           <code><span class="prompt">$ </span>brew install esuEdu/tap/wraith</code>
           <button class="copy" type="button" data-copy="brew install esuEdu/tap/wraith">Copy</button>
@@ -45,20 +45,20 @@
         <p class="note">Homebrew builds it from source on your Mac. <a href="https://github.com/esuEdu/wraith/releases/latest">Release notes</a></p>
       </div>
 
-      <figure class="terminal" aria-label="The wraith live view, showing flows from an app in the iPhone 17 simulator">
+      <figure class="terminal" aria-label="The wraith live view, showing flows from an app in the iPhone 17 simulator and from an iPhone on the same Wi-Fi">
         <div class="chrome" aria-hidden="true"><i></i><i></i><i></i></div>
-<pre><span class="t-badge"> wraith </span> <span class="t-dim">127.0.0.1:9090 · </span>capturing <span class="t-acc"><b>simulator</b></span><span class="t-dim"> · </span>214 flows
+<pre><span class="t-badge"> wraith </span> <span class="t-soft">127.0.0.1:9090</span><span class="t-dim"> · </span><span class="t-soft">capturing </span><span class="t-acc"><b>all</b></span><span class="t-dim"> · </span><span class="t-soft">214 flows</span><span class="t-dim"> · </span><span class="t-soft">devices </span>192.168.0.12:9090
 <span class="t-dim t-rule">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
- <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <b>GET    </b> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-dim">/v2/cart</span>
- <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">201</span> <b>POST   </b> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-dim">/v2/orders</span>
- <span class="t-dim">12:04:32</span> sim iPhone 17 · WebKit <span class="t-dim">tun</span> <b>CONNECT</b> <span class="t-dim">vpn   </span> www.apple.com:443<span class="t-dim"></span>
- <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <b>GET    </b> <span class="t-mag">direct</span> https://rates.partner.example<span class="t-dim">/today</span>
-<span class="t-acc">▌</span><span class="t-sel">12:04:33 sim iPhone 17 · Shop   503 GET     vpn    https://api.shop.example/v2/recs</span>
- <span class="t-dim">12:04:34</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <b>GET    </b> <span class="t-dim">vpn   </span> https://cdn.shop.example<span class="t-dim">/img/42.png</span>
- <span class="t-dim">12:04:35</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <b>GET    </b> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-dim">/v2/profile</span>
+ <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/cart</span>
+ <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">201</span> <span class="t-post">POST   </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/orders</span>
+ <span class="t-dim">12:04:32</span> device 192.168.0.23    <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/profile</span>
+ <span class="t-dim">12:04:32</span> device 192.168.0.23    <span class="t-dim">tun</span> <b>CONNECT</b> <span class="t-dim">vpn   </span> gateway.icloud.com:443  <span class="t-dim">no_decrypt</span>
+ <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-mag">direct</span> https://rates.partner.example<span class="t-soft">/today</span>
+<span class="t-mark">▌</span><span class="t-sel">12:04:33 device 192.168.0.23    503 GET     vpn    https://api.shop.example/v2/recs</span>
+ <span class="t-dim">12:04:34</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://cdn.shop.example<span class="t-soft">/img/42.png</span>
 
 <span class="t-dim t-rule">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
- <span class="t-acc"><b>↵</b></span> <span class="t-dim">details</span>  <span class="t-acc"><b>s</b></span> <span class="t-dim">source</span>  <span class="t-acc"><b>/</b></span> <span class="t-dim">filter</span>  <span class="t-acc"><b>c</b></span> <span class="t-dim">curl</span>  <span class="t-acc"><b>e</b></span> <span class="t-dim">export</span>  <span class="t-acc"><b>b</b></span> <span class="t-dim">bypass</span>  <span class="t-acc"><b>n</b></span> <span class="t-dim">no-decrypt</span>  <span class="t-acc"><b>x</b></span> <span class="t-dim">clear</span>  <span class="t-acc"><b>↑↓</b></span> <span class="t-dim">move</span>  <span class="t-acc"><b>q</b></span> <span class="t-dim">quit</span></pre>
+ <span class="t-acc"><b>↵</b></span> <span class="t-soft">details</span>  <span class="t-acc"><b>s</b></span> <span class="t-soft">source</span>  <span class="t-acc"><b>d</b></span> <span class="t-soft">device</span>  <span class="t-acc"><b>/</b></span> <span class="t-soft">filter</span>  <span class="t-acc"><b>c</b></span> <span class="t-soft">curl</span>  <span class="t-acc"><b>e</b></span> <span class="t-soft">export</span>  <span class="t-acc"><b>b</b></span> <span class="t-soft">bypass</span>  <span class="t-acc"><b>n</b></span> <span class="t-soft">no-decrypt</span>  <span class="t-acc"><b>x</b></span> <span class="t-soft">clear</span>  <span class="t-acc"><b>q</b></span> <span class="t-soft">quit</span></pre>
       </figure>
     </div>
   </section>
@@ -74,6 +74,7 @@
           <ul>
             <li><code>simulator</code>: every booted simulator (the default), or one by name or UDID</li>
             <li><code>app:Safari</code>, <code>app:com.example.shop</code>: one Mac app</li>
+            <li><code>device</code>: an iPhone or iPad on your Wi-Fi, set up once by scanning a QR code</li>
             <li><code>pid:4242</code>: one process and its children</li>
             <li><code>all</code>: everything that uses the system proxy</li>
           </ul>
@@ -141,7 +142,7 @@
         </svg>
       </div>
       <div class="flow-notes">
-        <div><h3>Who opened it</h3><p>wraith asks the kernel which process owns the client's socket. A process under <code>launchd_sim</code> belongs to a simulator; a helper inside an <code>.app</code> belongs to that app.</p></div>
+        <div><h3>Who opened it</h3><p>wraith asks the kernel which process owns the client's socket. A process under <code>launchd_sim</code> belongs to a simulator; a helper inside an <code>.app</code> belongs to that app. A connection from your Wi-Fi is a device you set up.</p></div>
         <div><h3>Decrypt or not</h3><p>Inside the source, simulator traffic is decrypted with wraith's own CA. Mac apps are decrypted only if you made the Mac trust it. Pinned apps and hosts on <code>no_decrypt</code> pass through.</p></div>
         <div><h3>Which route</h3><p>Bypassed hosts use DNS and sockets bound to the physical interface. Everything else takes the normal path, through the VPN if one is up.</p></div>
       </div>
@@ -158,7 +159,7 @@
         <div><h3>Nothing on disk</h3><p>Captured flows live in memory and are gone when wraith stops. Only an export you ask for writes a file.</p></div>
         <div><h3>Secrets redacted</h3><p>Exports and log lines hide Authorization, cookies and token headers and query parameters by default.</p></div>
         <div><h3>Fail closed</h3><p>A bypassed host that cannot be reached directly fails. It is never sent through the VPN instead.</p></div>
-        <div><h3>Local only</h3><p>Listens on 127.0.0.1 and ::1, verifies every upstream certificate, and makes no network calls of its own.</p></div>
+        <div><h3>Local only</h3><p>Listens on 127.0.0.1 and ::1; with <code>--device</code> also on your Wi-Fi address, for the devices you set up only. Verifies every upstream certificate and makes no network calls of its own.</p></div>
       </div>
     </div>
   </section>
