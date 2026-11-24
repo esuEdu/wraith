@@ -1,6 +1,6 @@
 // Package tui is wraith's live view: a list of captured flows that updates as traffic
 // arrives, with a filter, a detail view, a source picker, and keys for the common
-// actions. It draws with the terminal's own palette, so it follows the terminal's theme.
+// actions. It draws in Heliotrope Haze, or in the terminal's own palette.
 package tui
 
 import (
@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/esuEdu/wraith/internal/export"
 	"github.com/esuEdu/wraith/internal/store"
 )
 
@@ -26,6 +27,8 @@ type Actions interface {
 	Bypass(host string) error
 	NoDecrypt(host string) error
 	Curl(f store.Flow) string
+	// Redactor hides secrets in the headers and URLs the details copy, as exports do.
+	Redactor() export.Redactor
 	ExportHAR() (path string, err error)
 	Clear()
 }
@@ -72,13 +75,15 @@ type Model struct {
 	input    string // text being typed for the filter or the source
 	mode     mode
 	detailAt int // first line of the detail view on screen
+	tab      int // tabResponse or tabRequest
 	detail   struct {
-		at, width int // the flow (index into flows) and width the lines were built for
-		lines     []string
+		at, width, tab int // the flow (index into flows), width and tab the lines were built for
+		lines          []string
 	}
 	pick   picker
 	labels map[string]string // source → the name the picker showed for it
 
+	t             *theme
 	width, height int
 	status        string
 	statusAt      time.Time
@@ -87,8 +92,19 @@ type Model struct {
 // New returns a Model showing flows (oldest first) for a proxy listening on listen.
 func New(act Actions, listen string, flows []store.Flow) *Model {
 	m := &Model{act: act, listen: listen, flows: flows, follow: true, width: 100, height: 30, labels: map[string]string{}}
+	m.t, _ = themeNamed(DefaultTheme)
 	m.refilter()
 	return m
+}
+
+// SetTheme switches to one of Themes.
+func (m *Model) SetTheme(name string) error {
+	t, ok := themeNamed(name)
+	if !ok {
+		return fmt.Errorf("theme %q must be one of %s", name, strings.Join(Themes, ", "))
+	}
+	m.t, m.detail.lines = t, nil
+	return nil
 }
 
 // Init implements tea.Model.
@@ -126,8 +142,14 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.picking(k)
 	case modeDetail:
 		switch key {
-		case "esc", "q", "enter", "left", "h":
+		case "esc", "q", "enter", "backspace":
 			m.mode = modeList
+		case "tab", "shift+tab", "left", "right":
+			m.tab, m.detailAt = 1-m.tab, 0
+		case "1":
+			m.tab, m.detailAt = tabResponse, 0
+		case "2":
+			m.tab, m.detailAt = tabRequest, 0
 		case "down", "j":
 			m.detailAt++
 		case "up", "k":
@@ -142,6 +164,12 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.detailAt = len(m.detail.lines) // clamped when drawn
 		case "c":
 			return m, m.copyCurl()
+		case "b":
+			return m, m.copyBody()
+		case "h":
+			return m, m.copyHeaders()
+		case "u":
+			return m, m.copyURL()
 		case "ctrl+c":
 			return m, tea.Quit
 		}
@@ -265,19 +293,6 @@ func (m *Model) hostAction(what string, do func(string) error) {
 		return
 	}
 	m.say("added " + host + " to " + what + " (saved to config.yaml; applies to new connections)")
-}
-
-func (m *Model) copyCurl() tea.Cmd {
-	f, ok := m.selected()
-	if !ok {
-		return nil
-	}
-	if f.Kind != store.KindHTTP {
-		m.say("a tunnel has no request to copy (it was not decrypted)")
-		return nil
-	}
-	m.say("copied the request as curl (secrets redacted)")
-	return tea.SetClipboard(m.act.Curl(f))
 }
 
 func (m *Model) selected() (store.Flow, bool) {

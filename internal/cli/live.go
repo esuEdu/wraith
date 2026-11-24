@@ -175,6 +175,8 @@ func (l liveActions) Curl(f store.Flow) string {
 	return export.Curl(f, export.NewRedactor(l.redact))
 }
 
+func (l liveActions) Redactor() export.Redactor { return export.NewRedactor(l.redact) }
+
 // ExportHAR writes every stored flow, redacted, to wraith-<time>.har in the directory
 // wraith was started from.
 func (l liveActions) ExportHAR() (string, error) {

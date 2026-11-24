@@ -4,11 +4,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/esuEdu/wraith/internal/config"
 	"github.com/esuEdu/wraith/internal/sim/simtest"
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/tui"
@@ -142,5 +144,18 @@ func TestLiveBypassAndNoDecryptAreSavedAndApplied(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(e.dir, "config.yaml"))
 	if !strings.Contains(string(b), `"api.partner.io"`) || !strings.Contains(string(b), `"pinned.bank.test"`) {
 		t.Fatalf("config.yaml:\n%s", b)
+	}
+}
+
+func TestConfigThemesAreTheLiveViewsThemes(t *testing.T) {
+	if !slices.Equal(config.Themes, tui.Themes) || config.Default().Theme != tui.DefaultTheme {
+		t.Fatalf("config offers %v (default %s); the live view has %v (default %s)",
+			config.Themes, config.Default().Theme, tui.Themes, tui.DefaultTheme)
+	}
+	m := tui.New(nil, "", nil)
+	for _, name := range config.Themes {
+		if err := m.SetTheme(name); err != nil {
+			t.Error(err)
+		}
 	}
 }
