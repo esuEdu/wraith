@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/store"
@@ -16,11 +17,13 @@ import (
 
 type fakeActions struct {
 	source              string
+	choices             []Choice
 	bypassed, noDecrypt []string
 	exported, cleared   int
 }
 
-func (f *fakeActions) Source() string { return f.source }
+func (f *fakeActions) Source() string             { return f.source }
+func (f *fakeActions) Choices() ([]Choice, error) { return f.choices, nil }
 func (f *fakeActions) SetSource(s string) error {
 	if _, err := source.Parse(s); err != nil {
 		return err
@@ -56,6 +59,16 @@ func press(m *Model, keys ...string) {
 	}
 }
 
+// screen is what the view shows, without colors.
+func screen(m *Model) string { return ansi.Strip(m.View().Content) }
+
+// run delivers a command's message back to the model, as the program would.
+func run(m *Model, cmd tea.Cmd) {
+	if cmd != nil {
+		m.Update(cmd())
+	}
+}
+
 func typeText(m *Model, s string) {
 	for _, r := range s {
 		press(m, string(r))
@@ -79,7 +92,7 @@ func newModel() (*Model, *fakeActions) {
 
 func TestListShowsFlowsAndFollowsNewOnes(t *testing.T) {
 	m, _ := newModel()
-	out := m.View().Content
+	out := screen(m)
 	for _, want := range []string{"capturing simulator", "3 flows", "https://api.shop.test/cart", "pinned.bank.test:443", "tun", "503"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list misses %q:\n%s", want, out)
@@ -108,7 +121,7 @@ func TestFilterAndDetails(t *testing.T) {
 		t.Fatalf("filter shows %v", m.shown)
 	}
 	press(m, "enter")
-	out := m.View().Content
+	out := screen(m)
 	for _, want := range []string{"GET https://api.shop.test/cart", "Accept: application/json", `"items": []`, "route vpn"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details miss %q:\n%s", want, out)
@@ -131,7 +144,7 @@ func TestR1_5_SourceChangesFromTheLiveView(t *testing.T) {
 	if act.source != "app:Safari" || !strings.Contains(m.status, "capturing app:Safari for new connections") {
 		t.Fatalf("source %q status %q", act.source, m.status)
 	}
-	press(m, "s") // pre-filled with the current source
+	press(m, "s") // the picker starts empty; text that matches nothing is used as typed
 	for range len("app:Safari") {
 		press(m, "backspace")
 	}
@@ -139,6 +152,71 @@ func TestR1_5_SourceChangesFromTheLiveView(t *testing.T) {
 	press(m, "enter")
 	if act.source != "app:Safari" || !strings.Contains(m.status, "must be all") {
 		t.Fatalf("invalid source accepted: %q %q", act.source, m.status)
+	}
+}
+
+func TestR1_5_SourcePickerListsSimulatorsAndApps(t *testing.T) {
+	m, act := newModel()
+	act.choices = []Choice{
+		{Source: "simulator:2F3A0D4E-1B2C-4D5E-8F90-A1B2C3D4E5F6", Label: "iPhone 17 Pro", Note: "iOS 26.1 · CA installed"},
+		{Source: "simulator:9C1BEA91-F023-4C77-857A-A5622219DC8B", Label: "iPad Air", Note: "iOS 26.1 · CA not installed yet"},
+		{Source: "app:Safari", Label: "Safari", Note: "Mac app"},
+	}
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	if out := screen(m); !strings.Contains(out, "looking for booted simulators") {
+		t.Fatalf("picker before the list arrives:\n%s", out)
+	}
+	run(m, cmd)
+	out := screen(m)
+	for _, want := range []string{"Capture which source?", "▸ ● simulator", "every booted simulator (2 now)", "iPhone 17 Pro", "iOS 26.1 · CA installed", "iPad Air", "Safari", "Mac app"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("picker misses %q:\n%s", want, out)
+		}
+	}
+	press(m, "down", "enter") // the first simulator, by UDID
+	if act.source != "simulator:2F3A0D4E-1B2C-4D5E-8F90-A1B2C3D4E5F6" || m.mode != modeList {
+		t.Fatalf("source %q mode %v", act.source, m.mode)
+	}
+	if out := screen(m); !strings.Contains(out, "capturing iPhone 17 Pro") {
+		t.Fatalf("header does not name the simulator:\n%s", out)
+	}
+
+	run(m, func() tea.Cmd { _, c := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"}); return c }())
+	typeText(m, "ipad")
+	if out := screen(m); strings.Contains(out, "Safari") || !strings.Contains(out, "▸   iPad Air") {
+		t.Fatalf("typing does not narrow the list:\n%s", out)
+	}
+	press(m, "enter")
+	if act.source != "simulator:9C1BEA91-F023-4C77-857A-A5622219DC8B" {
+		t.Fatalf("source %q", act.source)
+	}
+
+	press(m, "s")
+	typeText(m, "pid:4242")
+	if out := screen(m); !strings.Contains(out, "enter uses pid:4242 as typed") {
+		t.Fatalf("no hint for typed sources:\n%s", out)
+	}
+	press(m, "enter")
+	if act.source != "pid:4242" {
+		t.Fatalf("typed source not used: %q", act.source)
+	}
+	press(m, "s", "esc")
+	if m.mode != modeList || act.source != "pid:4242" {
+		t.Fatal("esc changed the source")
+	}
+}
+
+func TestThemeUsesTheTerminalPaletteOnly(t *testing.T) {
+	m, _ := newModel()
+	press(m, "up") // a row that is not selected shows its colors
+	out := m.View().Content
+	if strings.Contains(out, "38;2;") || strings.Contains(out, "48;2;") || strings.Contains(out, "38;5;") || strings.Contains(out, "48;5;") {
+		t.Fatalf("a fixed RGB or 256-color code would ignore the terminal's theme:\n%q", out)
+	}
+	for _, sgr := range []string{"\x1b[36", "\x1b[1;7;36", "\x1b[31", "\x1b[7m"} { // cyan accent, badge, red 503, selection
+		if !strings.Contains(out, sgr) {
+			t.Errorf("missing %q in\n%q", sgr, out)
+		}
 	}
 }
 
@@ -158,7 +236,7 @@ func TestDetailsDecodePrettyPrintAndWrapBodies(t *testing.T) {
 	}})
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 60})
 	press(m, "enter")
-	out := m.View().Content
+	out := screen(m)
 	for _, want := range []string{"gzip, 35 decoded", `"pedido": "A04FBEEB",`, `"itens": [`, long[:79], long[79:158]} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details miss %q:\n%s", want, out)
@@ -190,7 +268,7 @@ func TestHostActionsCurlExportClear(t *testing.T) {
 		t.Fatalf("export: %d %q", act.exported, m.status)
 	}
 	press(m, "x")
-	if act.cleared != 1 || len(m.flows) != 0 || !strings.Contains(m.View().Content, "waiting for traffic") {
+	if act.cleared != 1 || len(m.flows) != 0 || !strings.Contains(screen(m), "waiting for traffic") {
 		t.Fatal("clear did not empty the list")
 	}
 }
@@ -198,7 +276,7 @@ func TestHostActionsCurlExportClear(t *testing.T) {
 func TestQuitAndNotices(t *testing.T) {
 	m, _ := newModel()
 	m.Update(NoticeMsg("simulator iPhone 17: installed the wraith CA"))
-	if !strings.Contains(m.View().Content, "installed the wraith CA") {
+	if !strings.Contains(screen(m), "installed the wraith CA") {
 		t.Fatal("notice not shown")
 	}
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})

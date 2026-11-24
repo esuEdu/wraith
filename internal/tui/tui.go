@@ -1,22 +1,17 @@
 // Package tui is wraith's live view: a list of captured flows that updates as traffic
-// arrives, with a filter, a detail view, and keys for the common actions.
+// arrives, with a filter, a detail view, a source picker, and keys for the common
+// actions. It draws with the terminal's own palette, so it follows the terminal's theme.
 package tui
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"maps"
 	"net"
-	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/esuEdu/wraith/internal/store"
 )
@@ -25,11 +20,21 @@ import (
 type Actions interface {
 	Source() string
 	SetSource(s string) error // new connections only (R1.5)
+	// Choices lists the booted simulators and running Mac apps for the source picker.
+	// It may be slow (simctl), so the view calls it off the UI loop.
+	Choices() ([]Choice, error)
 	Bypass(host string) error
 	NoDecrypt(host string) error
 	Curl(f store.Flow) string
 	ExportHAR() (path string, err error)
 	Clear()
+}
+
+// Choice is one entry in the source picker.
+type Choice struct {
+	Source string // what SetSource gets, e.g. "simulator:<udid>" or "app:Safari"
+	Label  string // what the picker and the header show, e.g. "iPhone 17 Pro"
+	Note   string // e.g. "iOS 26.1 · CA installed"
 }
 
 type mode int
@@ -46,6 +51,12 @@ type FlowMsg store.Flow
 
 // NoticeMsg shows a message from the proxy or the simulator watcher in the status line.
 type NoticeMsg string
+
+// choicesMsg delivers what Actions.Choices found.
+type choicesMsg struct {
+	list []Choice
+	err  error
+}
 
 // Model is the live view.
 type Model struct {
@@ -65,6 +76,8 @@ type Model struct {
 		at, width int // the flow (index into flows) and width the lines were built for
 		lines     []string
 	}
+	pick   picker
+	labels map[string]string // source → the name the picker showed for it
 
 	width, height int
 	status        string
@@ -73,7 +86,7 @@ type Model struct {
 
 // New returns a Model showing flows (oldest first) for a proxy listening on listen.
 func New(act Actions, listen string, flows []store.Flow) *Model {
-	m := &Model{act: act, listen: listen, flows: flows, follow: true, width: 100, height: 30}
+	m := &Model{act: act, listen: listen, flows: flows, follow: true, width: 100, height: 30, labels: map[string]string{}}
 	m.refilter()
 	return m
 }
@@ -94,6 +107,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refilter()
 	case NoticeMsg:
 		m.say(string(msg))
+	case choicesMsg:
+		m.pickerLoaded(msg)
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -105,8 +120,10 @@ func (m *Model) say(s string) { m.status, m.statusAt = s, time.Now() }
 func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
 	switch m.mode {
-	case modeFilter, modeSource:
+	case modeFilter:
 		return m.typing(k)
+	case modeSource:
+		return m.picking(k)
 	case modeDetail:
 		switch key {
 		case "esc", "q", "enter", "left", "h":
@@ -119,6 +136,10 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.detailAt += m.rows()
 		case "pgup":
 			m.detailAt = max(0, m.detailAt-m.rows())
+		case "g", "home":
+			m.detailAt = 0
+		case "G", "end":
+			m.detailAt = len(m.detail.lines) // clamped when drawn
 		case "c":
 			return m, m.copyCurl()
 		case "ctrl+c":
@@ -154,7 +175,7 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.refilter()
 		}
 	case "s":
-		m.mode, m.input = modeSource, m.act.Source()
+		return m, m.openPicker()
 	case "b":
 		m.hostAction("bypass", m.act.Bypass)
 	case "n":
@@ -177,34 +198,57 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// typing handles the filter and source prompts.
+// typing handles the filter prompt.
 func (m *Model) typing(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc":
 		m.mode = modeList
 	case "enter":
-		if m.mode == modeFilter {
-			m.filter = strings.TrimSpace(m.input)
-			m.refilter()
-		} else if err := m.act.SetSource(strings.TrimSpace(m.input)); err != nil {
-			m.say(err.Error())
-			return m, nil
-		} else {
-			m.say("capturing " + m.act.Source() + " for new connections")
-		}
+		m.filter = strings.TrimSpace(m.input)
+		m.refilter()
 		m.mode = modeList
-	case "backspace":
-		if _, size := utf8.DecodeLastRuneInString(m.input); size > 0 {
-			m.input = m.input[:len(m.input)-size]
-		}
 	case "ctrl+c":
 		return m, tea.Quit
 	default:
-		if k.Text != "" {
-			m.input += k.Text
-		}
+		m.edit(k)
 	}
 	return m, nil
+}
+
+// edit applies a key to the text being typed: backspace, or a printable key.
+func (m *Model) edit(k tea.KeyPressMsg) bool {
+	if k.String() == "backspace" {
+		if _, size := utf8.DecodeLastRuneInString(m.input); size > 0 {
+			m.input = m.input[:len(m.input)-size]
+			return true
+		}
+		return false
+	}
+	if k.Text != "" {
+		m.input += k.Text
+		return true
+	}
+	return false
+}
+
+// setSource switches the capture source and says so.
+func (m *Model) setSource(s string) bool {
+	if err := m.act.SetSource(s); err != nil {
+		m.say(err.Error())
+		return false
+	}
+	m.say("capturing " + m.sourceName() + " for new connections")
+	return true
+}
+
+// sourceName is the current source as the picker named it ("iPhone 17 Pro" rather than
+// "simulator:<udid>"), or as wraith spells it.
+func (m *Model) sourceName() string {
+	s := m.act.Source()
+	if l, ok := m.labels[s]; ok {
+		return l
+	}
+	return s
 }
 
 func (m *Model) hostAction(what string, do func(string) error) {
@@ -248,7 +292,7 @@ func (m *Model) move(d int) {
 	m.follow = m.cursor == len(m.shown)-1
 }
 
-// rows is how many flows fit on screen.
+// rows is how many flows fit on screen: all but the header, two rules and the footer.
 func (m *Model) rows() int { return max(m.height-4, 1) }
 
 // refilter recomputes the visible flows, keeping the selection on the newest flow when
@@ -283,7 +327,12 @@ func matches(f store.Flow, filter string) bool {
 		return true
 	}
 	hay := strings.ToLower(fmt.Sprintf("%s %s %s %d %s %s %s", f.Source, f.Method, f.URL, f.Status, f.Route, f.Kind, f.Err))
-	for w := range strings.FieldsSeq(strings.ToLower(filter)) {
+	return containsWords(hay, filter)
+}
+
+// containsWords reports whether every word of query appears in hay (already lower case).
+func containsWords(hay, query string) bool {
+	for w := range strings.FieldsSeq(strings.ToLower(query)) {
 		if !strings.Contains(hay, w) {
 			return false
 		}
@@ -305,242 +354,4 @@ func flowHost(f store.Flow) string {
 		return ""
 	}
 	return u.Hostname()
-}
-
-var (
-	dim    = lipgloss.NewStyle().Faint(true)
-	bold   = lipgloss.NewStyle().Bold(true)
-	invert = lipgloss.NewStyle().Reverse(true)
-	ok     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	warn   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	bad    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-)
-
-// View implements tea.Model.
-func (m *Model) View() tea.View {
-	v := tea.NewView(m.render())
-	v.AltScreen = true
-	v.WindowTitle = "wraith"
-	return v
-}
-
-func (m *Model) render() string {
-	if m.mode == modeDetail {
-		if f, ok := m.selected(); ok {
-			return m.renderDetail(f)
-		}
-	}
-	var b strings.Builder
-	head := fmt.Sprintf(" wraith · %s · capturing %s · %d flows", m.listen, m.act.Source(), len(m.flows))
-	if m.filter != "" {
-		head += fmt.Sprintf(" · filter %q (%d shown)", m.filter, len(m.shown))
-	}
-	b.WriteString(bold.Render(clip(head, m.width)) + "\n")
-
-	rows := m.rows()
-	if m.cursor < m.offset {
-		m.offset = m.cursor
-	}
-	if m.cursor >= m.offset+rows {
-		m.offset = m.cursor - rows + 1
-	}
-	if len(m.shown) == 0 {
-		b.WriteString(dim.Render(" waiting for traffic from the capture source…") + "\n")
-	}
-	for i := m.offset; i < min(m.offset+rows, len(m.shown)); i++ {
-		line := m.row(m.flows[m.shown[i]])
-		if i == m.cursor {
-			line = invert.Render(clip(line, m.width))
-		}
-		b.WriteString(line + "\n")
-	}
-	for i := len(m.shown) - m.offset; i < rows; i++ {
-		b.WriteString("\n")
-	}
-	b.WriteString(m.footer())
-	return b.String()
-}
-
-func (m *Model) row(f store.Flow) string {
-	status := fmt.Sprintf("%3d", f.Status)
-	style := ok
-	switch {
-	case f.Kind == store.KindTunnel && f.Status == 200:
-		status, style = "tun", dim
-	case f.Status == 0 || f.Status >= 500:
-		style = bad
-	case f.Status >= 400:
-		style = warn
-	}
-	src := fmt.Sprintf("%-20.20s", f.Source)
-	line := fmt.Sprintf(" %s %s %s %-7.7s %-6s ", f.Start.Format("15:04:05"), src, style.Render(status), f.Method, f.Route)
-	return clip(line+f.URL, m.width)
-}
-
-func (m *Model) footer() string {
-	switch m.mode {
-	case modeFilter:
-		return bold.Render(" filter: ") + m.input + "▏" + dim.Render("  enter apply · esc cancel")
-	case modeSource:
-		return bold.Render(" source: ") + m.input + "▏" + dim.Render("  all · simulator[:udid|name] · app:<name|id> · pid:<n> · enter apply · esc cancel")
-	}
-	help := " ↑↓ move · enter details · / filter · s source · b bypass · n no-decrypt · c copy curl · e export · x clear · q quit"
-	if m.status != "" && time.Since(m.statusAt) < 8*time.Second {
-		return clip(" "+m.status, m.width)
-	}
-	return dim.Render(clip(help, m.width))
-}
-
-// detailLines are the lines of the detail view for f, cached per flow and width so a
-// large body is decoded and wrapped once, not on every key.
-func (m *Model) detailLines(f store.Flow) []string {
-	at := m.shown[m.cursor]
-	if m.detail.lines != nil && m.detail.at == at && m.detail.width == m.width {
-		return m.detail.lines
-	}
-	var lines []string
-	add := func(s string) { lines = append(lines, s) }
-	add(bold.Render(fmt.Sprintf(" %s %s", f.Method, f.URL)))
-	add(fmt.Sprintf(" status %d · %s · %s · route %s · source %s · %s",
-		f.Status, f.Proto, f.Duration.Round(time.Millisecond), f.Route, f.Source, f.Start.Format("15:04:05.000")))
-	if f.Err != "" {
-		add(bad.Render(" error: " + f.Err))
-	}
-	if f.Kind == store.KindTunnel {
-		add("")
-		add(dim.Render(" passed through without decrypting: no headers or bodies to show"))
-	} else {
-		section := func(title string, h http.Header, body store.Body) {
-			add("")
-			add(bold.Render(" " + title))
-			for _, k := range sortedKeys(h) {
-				for _, v := range h[k] {
-					add(" " + k + ": " + v)
-				}
-			}
-			add("")
-			d := store.Decode(body, h.Get("Content-Encoding"))
-			text, ok := bodyText(d)
-			add(" " + bodySummary(body, d, ok))
-			if ok {
-				for l := range strings.SplitSeq(text, "\n") {
-					for _, w := range wrap(strings.TrimRight(l, "\r"), m.width-1) {
-						add(" " + w)
-					}
-				}
-			}
-		}
-		section("request", f.ReqHeader, f.ReqBody)
-		section("response", f.RespHeader, f.RespBody)
-	}
-	m.detail.at, m.detail.width, m.detail.lines = at, m.width, lines
-	return lines
-}
-
-func (m *Model) renderDetail(f store.Flow) string {
-	lines := m.detailLines(f)
-	rows := max(m.height-2, 1)
-	m.detailAt = min(m.detailAt, max(len(lines)-rows, 0))
-	var b strings.Builder
-	for i := m.detailAt; i < min(m.detailAt+rows, len(lines)); i++ {
-		b.WriteString(clip(lines[i], m.width) + "\n")
-	}
-	for i := min(m.detailAt+rows, len(lines)) - m.detailAt; i < rows; i++ {
-		b.WriteString("\n")
-	}
-	if m.status != "" && time.Since(m.statusAt) < 8*time.Second {
-		b.WriteString(clip(" "+m.status, m.width))
-	} else {
-		b.WriteString(dim.Render(" ↑↓ scroll · c copy curl · esc back"))
-	}
-	return b.String()
-}
-
-// bodyText is a decoded body as text to show, pretty-printed when it is JSON; ok is
-// false for an empty or binary body.
-func bodyText(d store.Decoded) (text string, ok bool) {
-	data := d.Data
-	if d.Partial { // the cut may fall inside a character
-		for i := 0; i < utf8.UTFMax-1 && len(data) > 0 && !utf8.Valid(data); i++ {
-			data = data[:len(data)-1]
-		}
-	}
-	if len(data) == 0 || !utf8.Valid(data) {
-		return "", false
-	}
-	var buf bytes.Buffer
-	if !d.Partial && json.Indent(&buf, data, "", "  ") == nil {
-		return buf.String(), true
-	}
-	return string(data), true
-}
-
-func bodySummary(b store.Body, d store.Decoded, text bool) string {
-	if b.Size == 0 {
-		return dim.Render("(no body)")
-	}
-	s := fmt.Sprintf("%d bytes", b.Size)
-	if d.Encoding != "" {
-		s += fmt.Sprintf(" %s, %d decoded", d.Encoding, len(d.Data))
-	}
-	if !text {
-		s = "binary, " + s
-	}
-	switch {
-	case d.Partial && d.Encoding == "":
-		s += fmt.Sprintf(", first %d shown", len(d.Data))
-	case d.Partial:
-		s += ", only the start"
-	}
-	if d.Err != "" {
-		s += "; " + d.Err
-	}
-	return dim.Render("(" + s + ")")
-}
-
-// wrap breaks s into pieces of at most width display cells.
-func wrap(s string, width int) []string {
-	if width <= 0 || len(s) <= width && isASCII(s) {
-		return []string{s}
-	}
-	var out []string
-	var cur strings.Builder
-	w := 0
-	for _, r := range s {
-		rw := 1
-		if r >= utf8.RuneSelf {
-			rw = lipgloss.Width(string(r))
-		}
-		if w+rw > width && w > 0 {
-			out = append(out, cur.String())
-			cur.Reset()
-			w = 0
-		}
-		cur.WriteRune(r)
-		w += rw
-	}
-	return append(out, cur.String())
-}
-
-func isASCII(s string) bool {
-	for i := range len(s) {
-		if s[i] >= utf8.RuneSelf {
-			return false
-		}
-	}
-	return true
-}
-
-func sortedKeys(h map[string][]string) []string { return slices.Sorted(maps.Keys(h)) }
-
-// clip cuts s to width display cells (ANSI styles are measured by lipgloss).
-func clip(s string, width int) string {
-	if width <= 0 || lipgloss.Width(s) <= width {
-		return s
-	}
-	r := []rune(s)
-	for len(r) > 0 && lipgloss.Width(string(r)) > width-1 {
-		r = r[:len(r)-1]
-	}
-	return string(r) + "…"
 }
