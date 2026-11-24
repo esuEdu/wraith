@@ -1,0 +1,96 @@
+package cli
+
+import (
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/esuEdu/wraith/internal/tui"
+)
+
+func TestLiveViewRunsWhenStdoutIsATerminalAndQuitsOnQ(t *testing.T) {
+	e := newEnv(t)
+	in, keys := io.Pipe()
+	d := e.deps()
+	d.Stdin = in
+	d.IsTerminal = func() bool { return true }
+	done := make(chan int, 1)
+	go func() { done <- Main(t.Context(), []string{"start", "--port", freePort(t), "--no-system-proxy"}, d) }()
+	select {
+	case <-e.ready:
+	case <-time.After(10 * time.Second):
+		t.Fatal("not ready")
+	}
+	time.Sleep(200 * time.Millisecond) // let the view draw
+	_, _ = keys.Write([]byte("q"))
+	select {
+	case code := <-done:
+		if code != ExitOK {
+			t.Fatalf("exit %d; stderr:\n%s", code, e.stderr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("q did not quit the live view")
+	}
+	if !strings.Contains(e.stdout.String(), "capturing simulator") {
+		t.Fatalf("the live view did not draw:\n%q", e.stdout.String())
+	}
+}
+
+func TestR1_5_SourceChangesApplyToNewConnections(t *testing.T) {
+	ts, upstreamRoots := upstreamTLS(t)
+	e := newEnv(t)
+	e.origin = curl // outside the default simulator source
+	var acts tui.Actions
+	d := e.deps()
+	d.OnActions = func(a tui.Actions) { acts = a }
+	done := make(chan int, 1)
+	go func() { done <- Main(t.Context(), []string{"start", "--port", freePort(t), "--no-system-proxy"}, d) }()
+	addr := <-e.ready
+
+	_, _ = fetch(t, addr, ts.URL+"/before", upstreamRoots)
+	if err := acts.SetSource("app:curl"); err != nil {
+		t.Fatal(err)
+	}
+	if acts.Source() != "app:curl" {
+		t.Fatalf("source %q", acts.Source())
+	}
+	if err := acts.SetSource("nonsense"); err == nil {
+		t.Fatal("invalid source accepted")
+	}
+	_, _ = fetch(t, addr, ts.URL+"/after", upstreamRoots)
+	e.sigs <- syscall.SIGTERM
+	<-done
+	out := e.stdout.String()
+	if strings.Count(out, "[curl] CONNECT") != 1 {
+		t.Fatalf("want exactly the connection made after the change:\n%s", out)
+	}
+}
+
+func TestLiveBypassAndNoDecryptAreSavedAndApplied(t *testing.T) {
+	e := newEnv(t)
+	var acts tui.Actions
+	d := e.deps()
+	d.OnActions = func(a tui.Actions) { acts = a }
+	done := make(chan int, 1)
+	go func() { done <- Main(t.Context(), []string{"start", "--port", freePort(t), "--no-system-proxy"}, d) }()
+	<-e.ready
+	if err := acts.Bypass("api.partner.io"); err != nil {
+		t.Fatal(err)
+	}
+	if err := acts.Bypass("api.partner.io"); err == nil {
+		t.Fatal("duplicate accepted")
+	}
+	if err := acts.NoDecrypt("pinned.bank.test"); err != nil {
+		t.Fatal(err)
+	}
+	e.sigs <- syscall.SIGTERM
+	<-done
+	b, _ := os.ReadFile(filepath.Join(e.dir, "config.yaml"))
+	if !strings.Contains(string(b), `"api.partner.io"`) || !strings.Contains(string(b), `"pinned.bank.test"`) {
+		t.Fatalf("config.yaml:\n%s", b)
+	}
+}

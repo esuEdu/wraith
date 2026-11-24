@@ -98,3 +98,21 @@ func TestSubscribersGetNewFlowsAndNeverBlockTheProxy(t *testing.T) {
 	}
 	s.Add(Flow{}) // no panic sending to a stopped subscriber
 }
+
+func TestS5_2_BodiesStreamThroughWithoutBeingBuffered(t *testing.T) {
+	pr, pw := io.Pipe()
+	c := NewCapture(pr, 4, func(Body) {})
+	go func() { _, _ = pw.Write([]byte("first")) }() // the rest is never written while we read
+	buf := make([]byte, 64)
+	done := make(chan int, 1)
+	go func() { n, _ := c.Read(buf); done <- n }()
+	select {
+	case n := <-done:
+		if string(buf[:n]) != "first" {
+			t.Fatalf("read %q", buf[:n])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the capture waited for the whole body instead of passing bytes on")
+	}
+	_ = pw.Close()
+}

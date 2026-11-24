@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,7 +36,7 @@ var publicDNS = []string{"2606:4700:4700::1111", "1.1.1.1"}
 // Router is a proxy.Dialer: bypassed hosts go out on the physical interface, everything
 // else the normal way.
 type Router struct {
-	rules    Rules
+	rules    atomic.Pointer[Rules]
 	iface    Iface
 	ifaceErr error
 	servers  []string
@@ -50,7 +51,8 @@ type Router struct {
 // or a name). A detection failure is kept: bypassed hosts then fail closed with it, and
 // everything else still works.
 func New(ctx context.Context, run execx.Runner, patterns []string, ifaceName string) *Router {
-	r := &Router{rules: NewRules(patterns), direct: &net.Dialer{}}
+	r := &Router{direct: &net.Dialer{}}
+	r.SetRules(patterns)
 	r.iface, r.ifaceErr = DetectIface(ctx, run, ifaceName)
 	if r.ifaceErr == nil {
 		if out, err := run.Run(ctx, "ipconfig", "getoption", r.iface.Name, "domain_name_server"); err == nil {
@@ -67,9 +69,19 @@ func New(ctx context.Context, run execx.Runner, patterns []string, ifaceName str
 // Iface returns the interface used for bypassed hosts, or why there is none.
 func (r *Router) Iface() (Iface, error) { return r.iface, r.ifaceErr }
 
+// SetRules replaces the bypass list; connections opened from now on follow it.
+func (r *Router) SetRules(patterns []string) {
+	rules := NewRules(patterns)
+	r.rules.Store(&rules)
+}
+
 // Route returns how host is reached, and the bypass rule it matched.
 func (r *Router) Route(host string) (route, rule string) {
-	if rule, ok := r.rules.Match(host); ok {
+	rules := r.rules.Load()
+	if rules == nil {
+		return RouteVPN, ""
+	}
+	if rule, ok := rules.Match(host); ok {
 		return RouteDirect, rule
 	}
 	return RouteVPN, ""

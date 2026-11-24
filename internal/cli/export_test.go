@@ -74,3 +74,27 @@ func TestS3_5_ExportReadsTheRunningInstanceOverAPrivateSocket(t *testing.T) {
 		t.Fatalf("export with nothing running: exit %d stderr %q", code, other.stderr)
 	}
 }
+
+func TestS3_1_FlowsAreGoneWhenWraithExits(t *testing.T) {
+	ts, _ := upstreamTLS(t)
+	e := newEnv(t)
+	e.dir = shortDir(t)
+	addr, done := e.startAsync("--port", freePort(t), "--no-system-proxy", "--insecure-upstream", "127.0.0.1")
+	_, _ = fetch(t, addr, ts.URL+"/kept-in-memory", caPool(t, e))
+	waitUntil(t, "the flow line", func() bool { return strings.Contains(e.stdout.String(), "/kept-in-memory") })
+	e.sigs <- syscall.SIGTERM
+	waitExit(t, done)
+
+	other := newEnvSharing(e)
+	if code := other.run("export", "--har", filepath.Join(t.TempDir(), "x.har")); code != ExitRuntime {
+		t.Fatalf("export after exit: %d", code)
+	}
+	entries, _ := os.ReadDir(e.dir)
+	for _, en := range entries {
+		switch en.Name() {
+		case "config.yaml", "ca", "wraith.lock":
+		default:
+			t.Errorf("left behind: %s", en.Name())
+		}
+	}
+}

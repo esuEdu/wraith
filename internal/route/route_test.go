@@ -57,11 +57,11 @@ func loopbackRouter(t *testing.T, answers []net.IP, dnsErr error) (*Router, *rec
 	}
 	direct := &recordingDialer{}
 	r := &Router{
-		rules:  NewRules([]string{"*.test"}),
 		iface:  Iface{Name: "lo0", Index: lo.Index},
 		direct: direct,
 		lookup: func(context.Context, string) ([]net.IP, error) { return answers, dnsErr },
 	}
+	r.SetRules([]string{"*.test"})
 	return r, direct
 }
 
@@ -248,5 +248,16 @@ func TestProbeReportsBothPathsPerFamily(t *testing.T) {
 	probes, _ = r.Probe(context.Background(), "probe.test", port)
 	if !errors.Is(probes[0].Bound.Err, ErrNoInterface) || probes[0].Default.Err != nil {
 		t.Fatalf("without an interface: %+v", probes[0])
+	}
+}
+
+func TestRulesChangeWhileRunning(t *testing.T) {
+	r, _ := loopbackRouter(t, nil, nil)
+	if route, _ := r.Route("api.partner.io"); route != RouteVPN {
+		t.Fatal("not on the list yet")
+	}
+	r.SetRules([]string{"*.test", "api.partner.io"})
+	if route, rule := r.Route("api.partner.io"); route != RouteDirect || rule != "api.partner.io" {
+		t.Fatalf("after SetRules: %s %s", route, rule)
 	}
 }
