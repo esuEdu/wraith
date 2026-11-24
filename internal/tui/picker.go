@@ -125,9 +125,9 @@ func (m *Model) renderPicker() string {
 	var b strings.Builder
 	b.WriteString(m.header() + "\n" + m.rule() + "\n")
 
-	title := " " + bold.Render("Capture which source?") + dim.Render("  applies to new connections; open ones keep theirs")
+	title := " " + m.t.bold.Render("Capture which source?") + m.t.dim.Render("  applies to new connections; open ones keep theirs")
 	if m.status != "" && time.Since(m.statusAt) < 8*time.Second {
-		title = " " + warn.Render(m.status)
+		title = " " + m.t.warn.Render(m.status)
 	}
 	b.WriteString(clip(title, m.width) + "\n\n")
 
@@ -149,29 +149,29 @@ func (m *Model) renderPicker() string {
 		mark, label := "  ", clip(c.Label, labelW)
 		label += strings.Repeat(" ", labelW-lipgloss.Width(label))
 		if i == m.pick.cursor {
-			mark, label = accent.Render("▸ "), accentBold.Render(label)
+			mark, label = m.t.mark.Render("▸ "), m.t.accentBold.Render(label)
 		}
 		cur := "  "
 		if strings.EqualFold(c.Source, current) {
-			cur = ok.Render("● ")
+			cur = m.t.ok.Render("● ")
 		}
-		b.WriteString(clip(" "+mark+cur+label+"  "+dim.Render(c.Note), m.width) + "\n")
+		b.WriteString(clip(" "+mark+cur+label+"  "+m.t.muted.Render(c.Note), m.width) + "\n")
 	}
 
 	var note string
 	switch {
 	case len(list) == 0:
-		note = dim.Render(" nothing matches; enter uses ") + bold.Render(strings.TrimSpace(m.input)) + dim.Render(" as typed (e.g. pid:1234, app:<name|bundle-id>)")
+		note = m.t.dim.Render(" nothing matches; enter uses ") + m.t.bold.Render(strings.TrimSpace(m.input)) + m.t.dim.Render(" as typed (e.g. pid:1234, app:<name|bundle-id>)")
 	case m.pick.loading:
-		note = dim.Render(" looking for booted simulators and running apps…")
+		note = m.t.dim.Render(" looking for booted simulators and running apps…")
 	case m.pick.err != "":
-		note = warn.Render(" " + m.pick.err)
+		note = m.t.warn.Render(" " + m.pick.err)
 	default:
-		note = dim.Render(" ● is the current source")
+		note = m.t.dim.Render(" ● is the current source")
 	}
 	b.WriteString(clip(note, m.width) + "\n")
 	b.WriteString(m.rule() + "\n")
-	prompt := accentBold.Render(" source › ") + m.input + accent.Render("▏")
-	b.WriteString(clip(prompt+"   "+hints("↑↓", "choose", "enter", "capture", "esc", "cancel"), m.width))
+	prompt := m.t.accentBold.Render(" source › ") + m.input + m.t.mark.Render("▏")
+	b.WriteString(clip(prompt+"   "+m.t.hints("↑↓", "choose", "enter", "capture", "esc", "cancel"), m.width))
 	return b.String()
 }

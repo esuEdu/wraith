@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/esuEdu/wraith/internal/export"
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/store"
 )
@@ -34,6 +36,7 @@ func (f *fakeActions) SetSource(s string) error {
 func (f *fakeActions) Bypass(h string) error      { f.bypassed = append(f.bypassed, h); return nil }
 func (f *fakeActions) NoDecrypt(h string) error   { f.noDecrypt = append(f.noDecrypt, h); return nil }
 func (f *fakeActions) Curl(fl store.Flow) string  { return "curl '" + fl.URL + "'" }
+func (f *fakeActions) Redactor() export.Redactor  { return export.NewRedactor(export.DefaultPatterns) }
 func (f *fakeActions) ExportHAR() (string, error) { f.exported++; return "/tmp/x.har", nil }
 func (f *fakeActions) Clear()                     { f.cleared++ }
 
@@ -51,6 +54,8 @@ func press(m *Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyUp}
 		case "down":
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
+		case "tab":
+			msg = tea.KeyPressMsg{Code: tea.KeyTab}
 		default:
 			r := []rune(k)[0]
 			msg = tea.KeyPressMsg{Code: r, Text: k}
@@ -122,10 +127,17 @@ func TestFilterAndDetails(t *testing.T) {
 	}
 	press(m, "enter")
 	out := screen(m)
-	for _, want := range []string{"GET https://api.shop.test/cart", "Accept: application/json", `"items": []`, "route vpn"} {
+	for _, want := range []string{" GET  https://api.shop.test/cart", "200 OK", "route vpn", " Response ", "JSON", `"items": []`} {
 		if !strings.Contains(out, want) {
-			t.Errorf("details miss %q:\n%s", want, out)
+			t.Errorf("response tab misses %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Accept") {
+		t.Errorf("response tab shows a request header:\n%s", out)
+	}
+	press(m, "tab")
+	if out := screen(m); !strings.Contains(out, "Accept: application/json") || !strings.Contains(out, "no body") {
+		t.Errorf("request tab:\n%s", out)
 	}
 	press(m, "esc", "esc")
 	if m.filter != "" || len(m.shown) != 3 {
@@ -206,8 +218,14 @@ func TestR1_5_SourcePickerListsSimulatorsAndApps(t *testing.T) {
 	}
 }
 
-func TestThemeUsesTheTerminalPaletteOnly(t *testing.T) {
+func TestTerminalThemeUsesTheTerminalPaletteOnly(t *testing.T) {
 	m, _ := newModel()
+	if err := m.SetTheme("terminal"); err != nil {
+		t.Fatal(err)
+	}
+	if v := m.View(); v.BackgroundColor != nil || v.ForegroundColor != nil {
+		t.Fatal("the terminal theme changes the terminal's colors")
+	}
 	press(m, "up") // a row that is not selected shows its colors
 	out := m.View().Content
 	if strings.Contains(out, "38;2;") || strings.Contains(out, "48;2;") || strings.Contains(out, "38;5;") || strings.Contains(out, "48;5;") {
@@ -217,6 +235,67 @@ func TestThemeUsesTheTerminalPaletteOnly(t *testing.T) {
 		if !strings.Contains(out, sgr) {
 			t.Errorf("missing %q in\n%q", sgr, out)
 		}
+	}
+}
+
+func TestHeliotropeHazeIsTheDefault(t *testing.T) {
+	m, _ := newModel()
+	v := m.View()
+	if v.BackgroundColor == nil || v.ForegroundColor == nil {
+		t.Fatal("Heliotrope Haze does not paint the screen")
+	}
+	for _, sgr := range []string{"48;2;201;128;242", "38;2;255;126;219", "48;2;58;43;92"} { // badge, selection bar, selected row
+		if !strings.Contains(v.Content, sgr) {
+			t.Errorf("missing %q in\n%q", sgr, v.Content)
+		}
+	}
+	press(m, "up", "up", "enter") // GET /cart: {"items":[]}
+	out := m.View().Content
+	for _, sgr := range []string{"\x1b[38;2;122;155;245m\"items\"", "\x1b[38;2;106;95;133m["} { // a blue key, faint punctuation
+		if !strings.Contains(out, sgr) {
+			t.Errorf("JSON is not colored: missing %q in\n%q", sgr, out)
+		}
+	}
+	if err := m.SetTheme("neon"); err == nil {
+		t.Fatal("an unknown theme was accepted")
+	}
+}
+
+func TestDetailsCopyEachPart(t *testing.T) {
+	act := &fakeActions{source: "simulator"}
+	m := New(act, "127.0.0.1:9090", []store.Flow{{
+		ID: 1, Kind: store.KindHTTP, Method: "POST", URL: "https://api.test/login?access_token=s3cret&x=1", Status: 200,
+		ReqHeader:  http.Header{"Authorization": {"Bearer s3cret"}, "Content-Type": {"application/json"}},
+		ReqBody:    store.Body{Data: []byte(`{"user":"ana"}`), Size: 14},
+		RespHeader: http.Header{"Content-Type": {"image/png"}},
+		RespBody:   store.Body{Data: []byte{0x89, 'P', 'N', 'G', 0xff, 0xfe}, Size: 6},
+	}})
+	press(m, "enter")
+	clip := func(key string) string {
+		_, cmd := m.Update(tea.KeyPressMsg{Code: []rune(key)[0], Text: key})
+		if cmd == nil {
+			return ""
+		}
+		return fmt.Sprint(cmd())
+	}
+	if got := clip("b"); got != "" || !strings.Contains(m.status, "binary; nothing copied") {
+		t.Fatalf("binary response body: %q %q", got, m.status)
+	}
+	if got := clip("h"); got != "Content-Type: image/png\n" {
+		t.Fatalf("response headers: %q", got)
+	}
+	press(m, "tab")
+	if got := clip("b"); got != "{\n  \"user\": \"ana\"\n}" || !strings.Contains(m.status, "copied the request body") {
+		t.Fatalf("request body: %q %q", got, m.status)
+	}
+	if got := clip("h"); got != "Authorization: REDACTED\nContent-Type: application/json\n" || !strings.Contains(m.status, "Authorization redacted") {
+		t.Fatalf("request headers: %q %q", got, m.status)
+	}
+	if got := clip("u"); strings.Contains(got, "s3cret") || !strings.Contains(got, "x=1") || !strings.Contains(m.status, "secrets redacted") {
+		t.Fatalf("url: %q %q", got, m.status)
+	}
+	if got := clip("c"); !strings.HasPrefix(got, "curl ") {
+		t.Fatalf("curl: %q", got)
 	}
 }
 
@@ -237,9 +316,16 @@ func TestDetailsDecodePrettyPrintAndWrapBodies(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 60})
 	press(m, "enter")
 	out := screen(m)
-	for _, want := range []string{"gzip, 35 decoded", `"pedido": "A04FBEEB",`, `"itens": [`, long[:79], long[79:158]} {
+	for _, want := range []string{"gzip, 35 B decoded", `"pedido": "A04FBEEB",`, `"itens": [`} {
 		if !strings.Contains(out, want) {
-			t.Errorf("details miss %q:\n%s", want, out)
+			t.Errorf("response misses %q:\n%s", want, out)
+		}
+	}
+	press(m, "tab")
+	out += screen(m)
+	for _, want := range []string{" " + long[:79] + "\n", "     " + long[79:154] + "\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("request body is not wrapped: missing %q:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "binary") || strings.Contains(out, "…") {

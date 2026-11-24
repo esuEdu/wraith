@@ -128,6 +128,7 @@ func TestS5_3_ValuesValidatedAtLoad(t *testing.T) {
 		"bypass duplicate":  "bypass: [a.com, A.com.]\n",
 		"no_decrypt label":  "no_decrypt: ['-bad.com']\n",
 		"redact header bad": "export:\n  redact_headers: ['X Token']\n",
+		"theme unknown":     "theme: neon\n",
 		"wrong type":        "port: abc\n",
 	}
 	for name, in := range cases {

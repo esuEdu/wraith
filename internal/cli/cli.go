@@ -458,7 +458,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	var ui *tea.Program
 	uiDone := make(chan struct{})
 	if useTUI {
-		ui = a.runTUI(ctx, actions, addr, flows, uiDone)
+		ui = a.runTUI(ctx, actions, addr, flows, cfg.Theme, uiDone)
 	}
 	if a.d.Ready != nil {
 		a.d.Ready(addr)
@@ -687,9 +687,12 @@ func (a *app) printFlows(flows *store.Store, asJSON bool, r export.Redactor) (do
 }
 
 // runTUI starts the live view; done closes when it exits (q, ctrl+c, or Quit).
-func (a *app) runTUI(ctx context.Context, actions tui.Actions, addr string, flows *store.Store, done chan struct{}) *tea.Program {
+func (a *app) runTUI(ctx context.Context, actions tui.Actions, addr string, flows *store.Store, theme string, done chan struct{}) *tea.Program {
 	ch, stopSub := flows.Subscribe(4096) // before the snapshot: the model drops repeats
 	model := tui.New(actions, addr, flows.Flows())
+	if err := model.SetTheme(theme); err != nil {
+		a.info("warning: %v; using %s", err, tui.DefaultTheme)
+	}
 	opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithInput(a.d.Stdin), tea.WithOutput(a.d.Stdout)}
 	if f, ok := a.d.Stdout.(*os.File); !ok || !isTerminal(f) {
 		opts = append(opts, tea.WithWindowSize(120, 30)) // no terminal to ask (tests)

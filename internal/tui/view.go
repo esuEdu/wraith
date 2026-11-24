@@ -1,15 +1,12 @@
 package tui
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -18,27 +15,12 @@ import (
 	"github.com/esuEdu/wraith/internal/store"
 )
 
-// The theme uses only the terminal's 16 ANSI colors plus bold, faint and reverse, never
-// fixed RGB values, so wraith looks like the rest of the terminal in any light or dark
-// theme. Cyan is the accent.
-var (
-	dim        = lipgloss.NewStyle().Faint(true)
-	bold       = lipgloss.NewStyle().Bold(true)
-	accent     = lipgloss.NewStyle().Foreground(lipgloss.Cyan)
-	accentBold = accent.Bold(true)
-	badge      = lipgloss.NewStyle().Bold(true).Reverse(true).Foreground(lipgloss.Cyan)
-	selected   = lipgloss.NewStyle().Reverse(true)
-	ok         = lipgloss.NewStyle().Foreground(lipgloss.Green)
-	warn       = lipgloss.NewStyle().Foreground(lipgloss.Yellow)
-	bad        = lipgloss.NewStyle().Foreground(lipgloss.Red)
-	direct     = lipgloss.NewStyle().Foreground(lipgloss.Magenta)
-)
-
 // View implements tea.Model.
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
 	v.WindowTitle = "wraith · " + m.sourceName()
+	v.BackgroundColor, v.ForegroundColor = m.t.bg, m.t.fg
 	return v
 }
 
@@ -51,6 +33,7 @@ func (m *Model) render() string {
 	case modeSource:
 		return m.renderPicker()
 	}
+	t := m.t
 	var b strings.Builder
 	b.WriteString(m.header() + "\n" + m.rule() + "\n")
 
@@ -67,7 +50,7 @@ func (m *Model) render() string {
 		if m.filter != "" {
 			msg = " no flow matches the filter; esc clears it"
 		}
-		b.WriteString(dim.Render(msg) + "\n")
+		b.WriteString(t.muted.Render(msg) + "\n")
 		lines++
 	}
 	for i := m.offset; i < min(m.offset+rows, len(m.shown)); i++ {
@@ -82,38 +65,36 @@ func (m *Model) render() string {
 
 // header is the top line: name, address, source, flow count and filter.
 func (m *Model) header() string {
-	sep := dim.Render(" · ")
-	h := badge.Render(" wraith ") + " " + dim.Render(m.listen) + sep +
-		"capturing " + accentBold.Render(m.sourceName()) + sep + fmt.Sprintf("%d flows", len(m.flows))
+	t := m.t
+	sep := t.dim.Render(" · ")
+	h := t.badge.Render(" wraith ") + " " + t.muted.Render(m.listen) + sep +
+		t.muted.Render("capturing ") + t.accentBold.Render(m.sourceName()) + sep + t.muted.Render(fmt.Sprintf("%d flows", len(m.flows)))
 	if m.filter != "" {
-		h += sep + "filter " + accentBold.Render(m.filter) + dim.Render(fmt.Sprintf(" (%d shown)", len(m.shown)))
+		h += sep + t.muted.Render("filter ") + t.accentBold.Render(m.filter) + t.dim.Render(fmt.Sprintf(" (%d shown)", len(m.shown)))
 	}
 	return clip(h, m.width)
 }
 
-func (m *Model) rule() string { return dim.Render(strings.Repeat("─", max(m.width, 1))) }
+func (m *Model) rule() string { return m.t.dim.Render(strings.Repeat("─", max(m.width, 1))) }
 
-// row is one flow in the list; the selected one is drawn in reverse video across the
-// screen, with an accent bar in front.
+// row is one flow in the list; the selected one is highlighted across the screen, with
+// a bar in front.
 func (m *Model) row(f store.Flow, sel bool) string {
+	t := m.t
 	status := fmt.Sprintf("%3d", f.Status)
-	stStyle := ok
+	stStyle := t.status(f.Status)
 	switch {
 	case f.Kind == store.KindTunnel && f.Status == 200:
-		status, stStyle = "tun", dim
+		status, stStyle = "tun", t.dim
 	case f.Status == 0:
-		status, stStyle = "ERR", bad
-	case f.Status >= 500:
-		stStyle = bad
-	case f.Status >= 400:
-		stStyle = warn
+		status = "ERR"
 	}
-	routeStyle := dim
+	routeStyle := t.dim
 	switch f.Route {
 	case "direct":
-		routeStyle = direct
+		routeStyle = t.direct
 	case "failed":
-		routeStyle = bad
+		routeStyle = t.bad
 	}
 	cols := []string{
 		f.Start.Format("15:04:05"),
@@ -126,11 +107,11 @@ func (m *Model) row(f store.Flow, sel bool) string {
 		line := strings.Join(append(cols, f.URL), " ")
 		line = clip(line, m.width-1)
 		line += strings.Repeat(" ", max(m.width-1-lipgloss.Width(line), 0))
-		return accent.Render("▌") + selected.Render(line)
+		return t.mark.Render("▌") + t.selected.Render(line)
 	}
 	host, rest := splitURL(f.URL)
-	line := " " + dim.Render(cols[0]) + " " + cols[1] + " " + stStyle.Render(cols[2]) + " " +
-		bold.Render(cols[3]) + " " + routeStyle.Render(cols[4]) + " " + host + dim.Render(rest)
+	line := " " + t.dim.Render(cols[0]) + " " + cols[1] + " " + stStyle.Render(cols[2]) + " " +
+		t.method(f.Method).Render(cols[3]) + " " + routeStyle.Render(cols[4]) + " " + host + t.muted.Render(rest)
 	return clip(line, m.width)
 }
 
@@ -147,185 +128,192 @@ func splitURL(u string) (host, rest string) {
 }
 
 func (m *Model) footer() string {
+	t := m.t
 	if m.mode == modeFilter {
-		prompt := accentBold.Render(" filter › ") + m.input + accent.Render("▏")
-		return clip(prompt+"   "+hints("enter", "apply", "esc", "cancel"), m.width)
+		prompt := t.accentBold.Render(" filter › ") + m.input + t.mark.Render("▏")
+		return clip(prompt+"   "+t.hints("enter", "apply", "esc", "cancel"), m.width)
 	}
-	if m.status != "" && time.Since(m.statusAt) < 8*time.Second {
-		return clip(accent.Render(" ● ")+m.status, m.width)
+	if s, ok := m.statusLine(); ok {
+		return s
 	}
 	// Most useful first; on a narrow screen the ones before "q quit" go, from the end.
 	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "e", "export",
 		"b", "bypass", "n", "no-decrypt", "x", "clear", "↑↓", "move", "q", "quit"}
-	h := hints(keys...)
+	h := t.hints(keys...)
 	for lipgloss.Width(h) > m.width && len(keys) > 4 {
 		keys = append(keys[:len(keys)-4], keys[len(keys)-2:]...)
-		h = hints(keys...)
+		h = t.hints(keys...)
 	}
 	return clip(h, m.width)
 }
 
-// hints draws key/description pairs: " ↵ details  / filter …".
-func hints(pairs ...string) string {
-	var parts []string
-	for i := 0; i+1 < len(pairs); i += 2 {
-		parts = append(parts, accentBold.Render(pairs[i])+" "+dim.Render(pairs[i+1]))
+// statusLine is the latest message, while it is fresh.
+func (m *Model) statusLine() (string, bool) {
+	if m.status == "" || time.Since(m.statusAt) >= 8*time.Second {
+		return "", false
 	}
-	return " " + strings.Join(parts, "  ")
+	return clip(m.t.mark.Render(" ● ")+m.status, m.width), true
 }
 
-// detailLines are the lines of the detail view for f, cached per flow and width so a
-// large body is decoded and wrapped once, not on every key.
+// The details have a fixed top (request line, status, tabs) over a scrolling tab: the
+// response or the request, each with its headers and body.
+
+const (
+	tabResponse = iota
+	tabRequest
+)
+
+var tabNames = [...]string{"Response", "Request"}
+
+// detailTop is the part of the details that does not scroll.
+func (m *Model) detailTop(f store.Flow) []string {
+	t := m.t
+	sep := t.dim.Render(" · ")
+	top := []string{" " + t.method(f.Method).Reverse(true).Render(" "+f.Method+" ") + " " + t.bold.Render(f.URL)}
+
+	code := fmt.Sprintf("%d", f.Status)
+	if txt := http.StatusText(f.Status); txt != "" && f.Kind == store.KindHTTP {
+		code += " " + txt
+	}
+	if f.Status == 0 {
+		code = "no response"
+	}
+	meta := []string{t.status(f.Status).Bold(true).Render(code)}
+	for _, s := range []string{f.Proto, f.Duration.Round(time.Millisecond).String(), "route " + f.Route, f.Source, f.Start.Format("15:04:05.000")} {
+		if strings.TrimSpace(s) != "" && s != "route " {
+			meta = append(meta, t.muted.Render(s))
+		}
+	}
+	top = append(top, " "+strings.Join(meta, sep))
+	if f.Err != "" {
+		top = append(top, t.bad.Render(" error: "+f.Err))
+	}
+	if f.Kind == store.KindHTTP {
+		tabs := " "
+		for i, name := range tabNames {
+			st := t.tabOff
+			if i == m.tab {
+				st = t.tabOn
+			}
+			tabs += st.Render(" "+name+" ") + " "
+		}
+		top = append(top, "", tabs)
+	}
+	return top
+}
+
+// detailLines are the scrolling lines of the details for f, cached per flow, tab and
+// width so a large body is decoded and colored once, not on every key.
 func (m *Model) detailLines(f store.Flow) []string {
 	at := m.shown[m.cursor]
-	if m.detail.lines != nil && m.detail.at == at && m.detail.width == m.width {
+	if m.detail.lines != nil && m.detail.at == at && m.detail.width == m.width && m.detail.tab == m.tab {
 		return m.detail.lines
 	}
+	t := m.t
 	var lines []string
-	add := func(s string) { lines = append(lines, s) }
-	add(" " + accentBold.Render(f.Method) + " " + bold.Render(f.URL))
-	status := fmt.Sprintf("%d", f.Status)
-	switch {
-	case f.Status == 0 || f.Status >= 500:
-		status = bad.Render(status)
-	case f.Status >= 400:
-		status = warn.Render(status)
-	default:
-		status = ok.Render(status)
+	add := func(indent int, words bool, segs ...seg) {
+		for _, l := range wrapSegs(segs, m.width-1, indent, words) {
+			lines = append(lines, " "+render(l))
+		}
 	}
-	sep := dim.Render(" · ")
-	add(" status " + status + sep + f.Proto + sep + f.Duration.Round(time.Millisecond).String() + sep +
-		"route " + f.Route + sep + "source " + f.Source + sep + dim.Render(f.Start.Format("15:04:05.000")))
-	if f.Err != "" {
-		add(bad.Render(" error: " + f.Err))
+	title := func(name, note string) {
+		w := lipgloss.Width(name) + lipgloss.Width(note) + 4
+		lines = append(lines, " "+t.accentBold.Render(name)+" "+note+" "+t.dim.Render(strings.Repeat("─", max(m.width-w, 0))))
 	}
 	if f.Kind == store.KindTunnel {
-		add("")
-		add(dim.Render(" passed through without decrypting: no headers or bodies to show"))
+		lines = append(lines, "", t.muted.Render(" passed through without decrypting: no headers or bodies to show"))
 	} else {
-		section := func(title string, h http.Header, body store.Body) {
-			add("")
-			add(" " + accentBold.Render(title) + " " + dim.Render(strings.Repeat("─", max(m.width-len(title)-3, 0))))
-			for _, k := range slices.Sorted(maps.Keys(h)) {
-				for _, v := range h[k] {
-					add(" " + accent.Render(k) + dim.Render(":") + " " + v)
-				}
+		h, body := f.RespHeader, f.RespBody
+		if m.tab == tabRequest {
+			h, body = f.ReqHeader, f.ReqBody
+		}
+		lines = append(lines, "")
+		title("Headers", t.muted.Render(fmt.Sprint(headerCount(h))))
+		keys := slices.Sorted(maps.Keys(h))
+		keyW := 0
+		for _, k := range keys {
+			keyW = max(keyW, len(k))
+		}
+		keyW = min(keyW, 24)
+		for _, k := range keys {
+			for _, v := range h[k] {
+				pad := strings.Repeat(" ", max(keyW-len(k), 0))
+				add(min(keyW+2, m.width/2), true, seg{k, &t.key}, seg{":" + pad + " ", &t.dim}, seg{v, nil})
 			}
-			add("")
-			d := store.Decode(body, h.Get("Content-Encoding"))
-			text, ok := bodyText(d)
-			add(" " + bodySummary(body, d, ok))
-			if ok {
-				for l := range strings.SplitSeq(text, "\n") {
-					for _, w := range wrap(strings.TrimRight(l, "\r"), m.width-1) {
-						add(" " + w)
-					}
+		}
+		if len(h) == 0 {
+			lines = append(lines, t.muted.Render(" none"))
+		}
+
+		lines = append(lines, "")
+		d := store.Decode(body, h.Get("Content-Encoding"))
+		text, isJSON, ok := bodyText(d)
+		note := t.bodySummary(body, d, ok)
+		if isJSON {
+			note = t.accent.Render("JSON") + t.dim.Render(" · ") + note
+		}
+		title("Body", note)
+		if ok {
+			color := isJSON && len(text) <= maxHighlight
+			for l := range strings.SplitSeq(text, "\n") {
+				l = strings.TrimRight(l, "\r")
+				if color {
+					add(4, false, t.jsonSegs(l)...)
+				} else {
+					add(4, false, seg{l, nil})
 				}
 			}
 		}
-		section("request", f.ReqHeader, f.ReqBody)
-		section("response", f.RespHeader, f.RespBody)
 	}
-	m.detail.at, m.detail.width, m.detail.lines = at, m.width, lines
+	m.detail.at, m.detail.width, m.detail.tab, m.detail.lines = at, m.width, m.tab, lines
 	return lines
 }
 
+func headerCount(h http.Header) int {
+	n := 0
+	for _, vs := range h {
+		n += len(vs)
+	}
+	return n
+}
+
 func (m *Model) renderDetail(f store.Flow) string {
+	t := m.t
+	top := m.detailTop(f)
 	lines := m.detailLines(f)
-	rows := max(m.height-2, 1)
+	rows := max(m.height-len(top)-3, 1) // the top, a rule under it, and the rule and hints at the bottom
 	m.detailAt = min(m.detailAt, max(len(lines)-rows, 0))
+
 	var b strings.Builder
+	for _, l := range top {
+		b.WriteString(clip(l, m.width) + "\n")
+	}
+	b.WriteString(m.rule() + "\n")
 	end := min(m.detailAt+rows, len(lines))
 	for _, l := range lines[m.detailAt:end] {
 		b.WriteString(clip(l, m.width) + "\n")
 	}
 	b.WriteString(strings.Repeat("\n", rows-(end-m.detailAt)))
-	if m.status != "" && time.Since(m.statusAt) < 8*time.Second {
-		b.WriteString(m.rule() + "\n" + clip(accent.Render(" ● ")+m.status, m.width))
+	b.WriteString(m.rule() + "\n")
+	if s, ok := m.statusLine(); ok {
+		b.WriteString(s)
 		return b.String()
 	}
 	where := ""
 	if len(lines) > rows {
-		where = dim.Render(fmt.Sprintf("   %d–%d of %d", m.detailAt+1, end, len(lines)))
+		where = t.dim.Render(fmt.Sprintf("   %d–%d of %d", m.detailAt+1, end, len(lines)))
 	}
-	b.WriteString(m.rule() + "\n")
-	b.WriteString(clip(hints("↑↓", "scroll", "space", "page", "c", "copy curl", "esc", "back")+where, m.width))
+	var h string
+	if f.Kind == store.KindHTTP {
+		other := strings.ToLower(tabNames[1-m.tab])
+		sep := t.dim.Render("  │ ")
+		h = t.hints("tab", other) + sep + t.muted.Render("copy") + t.hints("b", "body", "h", "headers", "u", "url", "c", "curl") +
+			sep + t.hints("↑↓", "scroll", "esc", "back")[1:]
+	} else {
+		h = t.hints("u", "copy host", "esc", "back")
+	}
+	b.WriteString(clip(h+where, m.width))
 	return b.String()
-}
-
-// bodyText is a decoded body as text to show, pretty-printed when it is JSON; ok is
-// false for an empty or binary body.
-func bodyText(d store.Decoded) (text string, ok bool) {
-	data := d.Data
-	if d.Partial { // the cut may fall inside a character
-		for i := 0; i < utf8.UTFMax-1 && len(data) > 0 && !utf8.Valid(data); i++ {
-			data = data[:len(data)-1]
-		}
-	}
-	if len(data) == 0 || !utf8.Valid(data) {
-		return "", false
-	}
-	var buf bytes.Buffer
-	if !d.Partial && json.Indent(&buf, data, "", "  ") == nil {
-		return buf.String(), true
-	}
-	return string(data), true
-}
-
-func bodySummary(b store.Body, d store.Decoded, text bool) string {
-	if b.Size == 0 {
-		return dim.Render("(no body)")
-	}
-	s := fmt.Sprintf("%d bytes", b.Size)
-	if d.Encoding != "" {
-		s += fmt.Sprintf(" %s, %d decoded", d.Encoding, len(d.Data))
-	}
-	if !text {
-		s = "binary, " + s
-	}
-	switch {
-	case d.Partial && d.Encoding == "":
-		s += fmt.Sprintf(", first %d shown", len(d.Data))
-	case d.Partial:
-		s += ", only the start"
-	}
-	if d.Err != "" {
-		s += "; " + d.Err
-	}
-	return dim.Render("(" + s + ")")
-}
-
-// wrap breaks s into pieces of at most width display cells.
-func wrap(s string, width int) []string {
-	if width <= 0 || len(s) <= width && isASCII(s) {
-		return []string{s}
-	}
-	var out []string
-	var cur strings.Builder
-	w := 0
-	for _, r := range s {
-		rw := 1
-		if r >= utf8.RuneSelf {
-			rw = lipgloss.Width(string(r))
-		}
-		if w+rw > width && w > 0 {
-			out = append(out, cur.String())
-			cur.Reset()
-			w = 0
-		}
-		cur.WriteRune(r)
-		w += rw
-	}
-	return append(out, cur.String())
-}
-
-func isASCII(s string) bool {
-	for i := range len(s) {
-		if s[i] >= utf8.RuneSelf {
-			return false
-		}
-	}
-	return true
 }
 
 // clip cuts s to width display cells, keeping its styles intact.

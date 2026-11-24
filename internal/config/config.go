@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,7 +34,12 @@ type Config struct {
 	Bypass    []string `yaml:"bypass"`
 	NoDecrypt []string `yaml:"no_decrypt"`
 	Export    Export   `yaml:"export"`
+	Theme     string   `yaml:"theme"`
 }
+
+// Themes are the live view's color themes: Rex's Heliotrope Haze, or the terminal's own
+// 16 colors.
+var Themes = []string{"heliotrope-haze", "terminal"}
 
 // Capture holds the in-memory capture limits (R5.1).
 type Capture struct {
@@ -56,6 +62,7 @@ func Default() Config {
 		Bypass:    []string{},
 		NoDecrypt: []string{"*.apple.com", "*.icloud.com"},
 		Export:    Export{RedactHeaders: []string{"Authorization", "Cookie", "Set-Cookie", "*token*"}},
+		Theme:     "heliotrope-haze",
 	}
 }
 
@@ -79,6 +86,8 @@ no_decrypt:                 # always passed through, never decrypted
 
 export:
   redact_headers: [Authorization, Cookie, Set-Cookie, "*token*"]
+
+theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for its own palette
 `
 
 // Parse decodes and validates a config file's content. Keys left out keep their default.
@@ -211,6 +220,9 @@ func (c *Config) normalize() error {
 		if !headerRe.MatchString(h) {
 			bad(fmt.Sprintf("export.redact_headers[%d]", i), "%q is not a header name or pattern", h)
 		}
+	}
+	if !slices.Contains(Themes, c.Theme) {
+		bad("theme", "%q must be one of %s", c.Theme, strings.Join(Themes, ", "))
 	}
 	return errors.Join(errs...)
 }
