@@ -6,8 +6,7 @@ LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PK
 
 GOLANGCI_LINT_VERSION := v2.15.0
 
-.PHONY: build build-universal test lint fmt-check vet golangci forbidden rules-check \
-        spike-source spike-bypass clean
+.PHONY: build build-universal test lint fmt-check vet golangci forbidden rules-check clean
 
 ## build: binary for this Mac, at ./wraith
 build:
@@ -29,7 +28,7 @@ test:
 lint: fmt-check vet golangci forbidden rules-check
 
 fmt-check:
-	@out="$$(gofmt -l . | grep -v '^spike/' || true)"; \
+	@out="$$(gofmt -l .)"; \
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 vet:
@@ -46,12 +45,7 @@ forbidden:
 rules-check:
 	go run ./tools/rulescheck
 
-spike-source:
-	go run ./spike/source
 
-spike-bypass:
-	@test -n "$(HOST)" || (echo "usage: make spike-bypass HOST=example.com [IFACE=en0]"; exit 2)
-	go run ./spike/bypass -host $(HOST) -iface $${IFACE:-en0}
 
 clean:
 	rm -rf wraith dist coverage.out
