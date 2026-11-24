@@ -228,8 +228,10 @@ func (a *app) startCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Set the system proxy and start the proxy",
-		Long: "Set the system proxy and start the proxy. Until the live view arrives (M5),\n" +
-			"start prints one line per request, as with --log.",
+		Long: "Set the system proxy, start the proxy and show the live view. Traffic from the\n" +
+			"capture source is decrypted and shown; everything else passes through untouched.\n" +
+			"With --log, or when stdout is not a terminal, it prints one line per request.\n" +
+			"Ctrl-C (or q in the live view) stops it and restores the system proxy.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var o config.Overrides
@@ -258,7 +260,7 @@ func (a *app) startCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.IntVar(&port, "port", 9090, "proxy port on 127.0.0.1 and ::1")
 	f.StringVar(&source, "source", "simulator", "capture source: all, simulator[:udid|name], app:<name|bundle-id>, pid:<pid>")
-	f.StringVar(&iface, "iface", "auto", "physical interface for bypassed hosts (bypass arrives in M4)")
+	f.StringVar(&iface, "iface", "auto", "physical interface for bypassed hosts: auto, or en0, en1, ...")
 	f.IntVar(&maxFlows, "max-flows", 5000, "flows kept in memory")
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
 	f.BoolVar(&noSystemProxy, "no-system-proxy", false, "listen only; leave the system proxy settings alone")
@@ -478,7 +480,7 @@ func (a *app) stopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop a running wraith and restore the system proxy settings",
 		Long: "Stop a running wraith and restore the system proxy settings. Safe to run at any\n" +
-			"time: with no instance running it restores settings left by a crash, if any (R4.6).",
+			"time: with no instance running it restores settings left by a crash, if any.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return a.stop(cmd.Context()) },
 	}

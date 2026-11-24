@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>wraith docs</title>
+<meta name="description" content="How to install and use wraith: capture sources, HTTPS decryption and the CA, VPN bypass, the live view, export, configuration and every command.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<header class="site-header gutter">
+  <div class="container">
+    <a class="brand" href="../" aria-label="wraith home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C9.9 3 5 7.9 5 14v14l3.7-2.6L12.3 28l3.7-2.6 3.7 2.6 3.6-2.6L27 28V14C27 7.9 22.1 3 16 3z" fill="currentColor"/><circle cx="12" cy="14" r="2.2" fill="var(--bg)"/><circle cx="20" cy="14" r="2.2" fill="var(--bg)"/></svg>
+      wraith
+    </a>
+    <nav aria-label="Main">
+      <a href="./" aria-current="page">Docs</a>
+      <a href="#commands">Commands</a>
+      <a href="https://github.com/esuEdu/wraith">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="container gutter">
+  <div class="docs">
+    <aside class="toc">
+      <p>On this page</p>
+      <details>
+        <summary>Contents</summary>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#install">Install</a></li>
+          <li><a href="#quick-start">Quick start</a></li>
+          <li><a href="#sources">Capture sources</a></li>
+          <li><a href="#decryption">HTTPS and the CA</a></li>
+          <li><a href="#bypass">VPN bypass</a></li>
+          <li><a href="#live-view">Live view</a></li>
+          <li><a href="#log">Log mode and JSON</a></li>
+          <li><a href="#export">Export</a></li>
+          <li><a href="#configuration">Configuration</a></li>
+          <li><a href="#commands">Commands</a></li>
+          <li><a href="#security">Security and privacy</a></li>
+          <li><a href="#troubleshooting">Troubleshooting</a></li>
+          <li><a href="#limits">Limits</a></li>
+        </ol>
+      </details>
+    </aside>
+
+    <article class="doc">
+      <header>
+        <h1>Documentation</h1>
+        <p>Everything wraith does, how to use it, and what it changes on your Mac.</p>
+      </header>
+
+      <section id="overview">
+        <h2>Overview</h2>
+        <p>wraith is a proxy you run from the terminal. While it runs, it is your Mac's HTTP and HTTPS proxy, and it does two things:</p>
+        <ul>
+          <li><strong>Inspect.</strong> It decrypts and shows traffic from one <a href="#sources">capture source</a>: the iOS Simulator, one Mac app, one process, or everything. Traffic from anything else passes through untouched: never decrypted, stored or shown.</li>
+          <li><strong>Route.</strong> Hosts on the <a href="#bypass">bypass list</a> are resolved and connected on the physical interface (Wi-Fi or Ethernet) instead of the VPN.</li>
+        </ul>
+        <p>Requirements: macOS 13 or later on Apple Silicon or Intel. Xcode with at least one iOS simulator to capture simulator traffic.</p>
+        <p>wraith keeps its files in <code>~/.wraith</code>. Set <code>WRAITH_HOME</code> to use another folder, for example a throwaway one for testing.</p>
+      </section>
+
+      <section id="install">
+        <h2>Install</h2>
+        <h3>Homebrew</h3>
+        <p>From v1.0.0, wraith installs from its own tap. Homebrew builds it on your Mac, so there is no Gatekeeper prompt.</p>
+        <pre class="block">brew install esuEdu/tap/wraith
+wraith version</pre>
+        <h3>From source</h3>
+        <p>Needs Go (the repository pins its toolchain; <code>go</code> fetches the right one).</p>
+        <pre class="block">git clone https://github.com/esuEdu/wraith.git
+cd wraith
+make build
+./wraith version</pre>
+        <h3>Uninstall</h3>
+        <p>Take the CA out of simulators and the Mac first, then remove the program and its folder:</p>
+        <pre class="block">wraith ca remove
+wraith ca untrust --mac
+brew uninstall wraith
+rm -rf ~/.wraith</pre>
+      </section>
+
+      <section id="quick-start">
+        <h2>Quick start</h2>
+        <ol>
+          <li>Boot a simulator: <code>xcrun simctl boot "iPhone 17" &amp;&amp; open -a Simulator</code>.</li>
+          <li>Run <code>wraith start</code>. The first run creates <code>~/.wraith/config.yaml</code> and the CA, puts the CA into every booted simulator, sets the system proxy, and opens the live view.</li>
+          <li>Use your app in the simulator. Its requests appear as they complete, decrypted.</li>
+          <li>Press <kbd>q</kbd> (or Ctrl-C). wraith stops and restores your proxy settings.</li>
+        </ol>
+        <p>Check your setup at any time with <code>wraith doctor</code>.</p>
+        <div class="callout">
+          <p><strong>Only want to listen?</strong> <code>wraith start --no-system-proxy</code> leaves the system proxy alone; point a client at <code>127.0.0.1:9090</code> yourself, for example <code>curl -x http://127.0.0.1:9090 https://example.com</code>.</p>
+        </div>
+      </section>
+
+      <section id="sources">
+        <h2>Capture sources</h2>
+        <p>The source decides which connections wraith decrypts and shows. Choose it with <code>--source</code> or <code>source:</code> in the config. Everything outside it is passed through untouched and never shown.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Source</th><th>Captures</th></tr></thead>
+          <tbody>
+            <tr><td><code>simulator</code></td><td>Every booted iOS simulator. The default.</td></tr>
+            <tr><td><code>simulator:iPhone 17</code><br><code>simulator:&lt;UDID&gt;</code></td><td>One simulator, by device name or UDID.</td></tr>
+            <tr><td><code>app:Safari</code><br><code>app:com.example.shop</code></td><td>One app, by name or bundle id; also an app inside a simulator. A command-line tool matches by its executable name, e.g. <code>app:curl</code>.</td></tr>
+            <tr><td><code>pid:4242</code></td><td>One process and every process it started.</td></tr>
+            <tr><td><code>all</code></td><td>Everything that uses the system proxy.</td></tr>
+          </tbody>
+        </table></div>
+        <h3>How wraith knows who connected</h3>
+        <p>For each new connection, wraith asks the kernel which process owns the client's socket, then walks its parent processes. A process running under <code>launchd_sim</code> belongs to a simulator, whose UDID comes from <code>launchd_sim</code>'s arguments. An app is the outermost <code>.app</code> bundle on the process's own path, so Chrome's network helper (a bundle inside Chrome.app) counts as Chrome. A connection whose process cannot be identified is outside every source.</p>
+        <p>Pages loaded in a simulator's Safari or in a web view come from <code>com.apple.WebKit.Networking</code>, not from the app itself, and are labelled that way.</p>
+        <p>Change the source of a running wraith with <kbd>s</kbd> in the live view. It applies to new connections.</p>
+      </section>
+
+      <section id="decryption">
+        <h2>HTTPS and the CA</h2>
+        <p>wraith decrypts HTTPS with its own certificate authority, created on your Mac on first use in <code>~/.wraith/ca/</code>. The folder is mode 0700 and the key 0600; wraith refuses to start if either is wider. The key never leaves the folder. The CA is valid for two years; <code>wraith doctor</code> warns 30 days before it expires.</p>
+        <h3>Simulators</h3>
+        <p><code>wraith start</code> installs the CA into every booted simulator, and into each simulator booted while it runs, within a few seconds. <code>wraith ca install</code> does it on demand; <code>wraith ca remove</code> takes it out of every simulator again, booted or not, without touching other certificates. A booted simulator may keep trusting a removed CA until it restarts.</p>
+        <h3>The Mac</h3>
+        <p>By default the Mac does <em>not</em> trust the wraith CA, so Mac apps in the source are passed through and shown, but not decrypted. To decrypt them:</p>
+        <pre class="block">wraith ca trust --mac      # explains what this allows, asks, then macOS asks for your password
+wraith ca untrust --mac    # undo</pre>
+        <div class="callout"><p><strong>Think before trusting.</strong> While the Mac trusts the CA, wraith can decrypt HTTPS from every app that uses the system trust store, and anyone who obtains <code>~/.wraith/ca/ca.key</code> could impersonate any website to your Mac.</p></div>
+        <h3>When a connection is not decrypted</h3>
+        <p>A tunnel that wraith passes through shows as <code>tunnel</code> in the log, with the reason:</p>
+        <ul>
+          <li><strong>on no_decrypt</strong>: the host matches the <code>no_decrypt</code> list (by default <code>*.apple.com</code> and <code>*.icloud.com</code>). Add a host from the live view with <kbd>n</kbd>.</li>
+          <li><strong>pinned</strong>: the client rejected wraith's certificate earlier (certificate pinning, or a client that does not trust the CA). wraith passes that host through for the rest of the session; the first attempt fails.</li>
+          <li><strong>the client sent nothing</strong>: the client opened a tunnel and stayed silent for 10 seconds, usually a browser's preconnect.</li>
+          <li><strong>not TLS</strong>: another protocol over CONNECT, such as SSH.</li>
+          <li><strong>this client is not decrypted</strong>: a Mac app while the Mac does not trust the CA.</li>
+        </ul>
+        <p>wraith always verifies the real server's certificate (TLS 1.2 or later). For a local development server with a self-signed certificate, name it: <code>wraith start --insecure-upstream dev.local.test</code>.</p>
+        <p>Rotate the CA with <code>wraith ca rotate</code>: it removes the old one from simulators and installs the new one into booted ones. Export the certificate (never the key) for a device you set up by hand with <code>wraith ca export ca.pem</code>.</p>
+      </section>
+
+      <section id="bypass">
+        <h2>VPN bypass</h2>
+        <p>Hosts on the bypass list skip the VPN. wraith resolves them with DNS sent over the physical interface (its own DHCP resolver first, then public resolvers; never the VPN's DNS), then connects with sockets bound to that interface: IPv6 addresses first, IPv4 next. macOS keeps a route for the interface even while a VPN owns the default one.</p>
+        <pre class="block">wraith bypass add api.partner.example '*.corp.example.com'
+wraith bypass list
+wraith bypass rm '*.corp.example.com'</pre>
+        <ul>
+          <li><code>api.example.com</code> matches that host only; <code>*.example.com</code> matches its subdomains, not <code>example.com</code> itself. The most specific rule wins.</li>
+          <li>Bypass applies to every connection that reaches wraith, whatever the capture source.</li>
+          <li>The list lives in <code>config.yaml</code>; the commands edit it and keep your comments. <kbd>b</kbd> in the live view adds the selected host and applies it at once.</li>
+          <li>The interface is detected (the first <code>en*</code> that is up, has an address and its own default route). Override it with <code>--iface en1</code> or <code>interface:</code> in the config.</li>
+        </ul>
+        <h3>Fail closed</h3>
+        <p>If a bypassed host cannot be reached on the physical interface, the connection fails and shows as <code>failed</code>. It is never sent through the VPN instead.</p>
+        <h3>When your VPN gets in the way</h3>
+        <p>Some VPNs refuse sockets bound outside the tunnel for IPv4 but leave IPv6 alone. Then only hosts with an IPv6 address can be bypassed. <code>wraith doctor --host &lt;host&gt;</code> shows each address family separately:</p>
+        <pre class="block">info  IPv6 2001:db8:10::1: normal path via en0 from 2001:db8::5; bypass via en0 from 2001:db8::5
+info  IPv4 203.0.113.10: normal path via utun6 (a VPN tunnel) from 10.203.1.19; bypass fails (connect: network is unreachable)
+ok    bypass works for api.partner.example over IPv6</pre>
+        <div class="callout"><p><strong>Check your company's policy.</strong> Sending traffic around a work VPN can break it, even when it works technically.</p></div>
+      </section>
+
+      <section id="live-view">
+        <h2>Live view</h2>
+        <p><code>wraith start</code> opens the live view when your terminal is interactive. Each row shows the time, the source, the status (<code>tun</code> for a tunnel passed through), the method, the route and the URL. The list follows new traffic unless you scroll up.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Key</th><th>Does</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>↑</kbd> <kbd>↓</kbd> · <kbd>j</kbd> <kbd>k</kbd></td><td>Move. <kbd>g</kbd> / <kbd>G</kbd> jump to the oldest / newest.</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>Details: request and response headers and bodies. <kbd>Esc</kbd> goes back.</td></tr>
+            <tr><td><kbd>/</kbd></td><td>Filter: every word must appear in the source, method, URL, status or route. <kbd>Esc</kbd> clears it.</td></tr>
+            <tr><td><kbd>s</kbd></td><td>Change the capture source for new connections.</td></tr>
+            <tr><td><kbd>b</kbd></td><td>Add the selected host to the bypass list (saved and applied at once).</td></tr>
+            <tr><td><kbd>n</kbd></td><td>Add the selected host to <code>no_decrypt</code>.</td></tr>
+            <tr><td><kbd>c</kbd></td><td>Copy the request as a curl command, secrets redacted.</td></tr>
+            <tr><td><kbd>e</kbd></td><td>Export every flow as HAR to <code>wraith-&lt;time&gt;.har</code> in the current folder, redacted.</td></tr>
+            <tr><td><kbd>x</kbd></td><td>Clear the list.</td></tr>
+            <tr><td><kbd>q</kbd> · Ctrl-C</td><td>Quit and restore the system proxy.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="log">
+        <h2>Log mode and JSON</h2>
+        <p>With <code>--log</code>, or when the output is not a terminal, wraith prints one line per flow instead:</p>
+        <pre class="block">12:04:31 [sim iPhone 17 · Shop] GET https://api.shop.example/v2/cart?page=2 200 1.2 kB 34ms vpn
+12:04:32 [curl] CONNECT example.com:443 tunnel vpn (passed through: this client is not decrypted …)
+12:04:33 [curl] CONNECT blocked.example:443 502 failed (bypass failed: …)</pre>
+        <p>Lines carry the time, source, method, URL, status, size, duration and route, never a header value or a body. Query parameters named like secrets are redacted and query strings are cut after 64 characters. <code>--log --json</code> prints the same fields as one JSON object per line.</p>
+      </section>
+
+      <section id="export">
+        <h2>Export</h2>
+        <p>Captured flows live only in the running wraith's memory (the last 5,000 by default, bodies kept up to 1 MB each). Save them while it runs:</p>
+        <pre class="block">wraith export --har flows.har</pre>
+        <ul>
+          <li>The file is HAR 1.2: open it in a browser's network panel or any HAR viewer. Each entry notes its source and route.</li>
+          <li><code>Authorization</code>, <code>Cookie</code>, <code>Set-Cookie</code> and <code>*token*</code> headers, and query parameters with those names, are replaced by <code>REDACTED</code>. <code>--no-redact</code> keeps them.</li>
+          <li>The file is written with mode 0600 and never over an existing one without <code>--force</code>.</li>
+          <li><code>export</code> talks to the running wraith over a Unix socket in <code>~/.wraith</code> that only you can open. When wraith is not running there is nothing to export.</li>
+        </ul>
+      </section>
+
+      <section id="configuration">
+        <h2>Configuration</h2>
+        <p><code>~/.wraith/config.yaml</code> is created with these defaults on first run. Command-line flags override it. Unknown keys and invalid values are refused when wraith starts.</p>
+        <pre class="block">port: 9090                  # proxy port on 127.0.0.1 and ::1
+source: simulator           # all | simulator | simulator:&lt;udid|name&gt; | app:&lt;name|bundle-id&gt; | pid:&lt;pid&gt;
+interface: auto             # physical interface for bypassed hosts: auto, or en0, en1, ...
+
+capture:
+  max_flows: 5000           # flows kept in memory
+  max_body_bytes: 1048576   # bodies above this are truncated
+
+bypass: []                  # hosts that skip the VPN, e.g. ["*.example.com", "api.partner.io"]
+
+no_decrypt:                 # always passed through, never decrypted
+  - "*.apple.com"
+  - "*.icloud.com"
+
+export:
+  redact_headers: [Authorization, Cookie, Set-Cookie, "*token*"]</pre>
+        <h3>Files in ~/.wraith</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>File</th><th>What it is</th></tr></thead>
+          <tbody>
+            <tr><td><code>config.yaml</code></td><td>Settings, above.</td></tr>
+            <tr><td><code>ca/ca.pem</code>, <code>ca/ca.key</code></td><td>The CA certificate and its private key (0600).</td></tr>
+            <tr><td><code>state.json</code></td><td>Your saved proxy settings, while wraith has changed them.</td></tr>
+            <tr><td><code>wraith.lock</code></td><td>Keeps one instance running at a time.</td></tr>
+            <tr><td><code>wraith.sock</code></td><td>The socket <code>wraith export</code> talks to, while wraith runs.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="commands">
+        <h2>Commands</h2>
+        <h3>wraith start</h3>
+        <p>Set the system proxy, start the proxy and show the live view.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Flag</th><th>Default</th><th>Does</th></tr></thead>
+          <tbody>
+            <tr><td><code>--source</code></td><td><code>simulator</code></td><td>Capture source, see <a href="#sources">Capture sources</a>.</td></tr>
+            <tr><td><code>--port</code></td><td><code>9090</code></td><td>Port on 127.0.0.1 and ::1.</td></tr>
+            <tr><td><code>--no-system-proxy</code></td><td></td><td>Listen only; leave the system proxy alone.</td></tr>
+            <tr><td><code>--no-decrypt</code></td><td></td><td>Pass HTTPS through without decrypting it.</td></tr>
+            <tr><td><code>--insecure-upstream &lt;host&gt;</code></td><td></td><td>Do not verify this host's certificate (repeatable). For local dev servers.</td></tr>
+            <tr><td><code>--iface</code></td><td><code>auto</code></td><td>Physical interface for bypassed hosts.</td></tr>
+            <tr><td><code>--log</code></td><td></td><td>One line per flow instead of the live view.</td></tr>
+            <tr><td><code>--json</code></td><td></td><td>With <code>--log</code>: one JSON object per line.</td></tr>
+            <tr><td><code>--max-flows</code></td><td><code>5000</code></td><td>Flows kept in memory.</td></tr>
+            <tr><td><code>--max-body</code></td><td><code>1048576</code></td><td>Bytes of each body kept.</td></tr>
+          </tbody>
+        </table></div>
+        <h3>Everything else</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Command</th><th>Does</th></tr></thead>
+          <tbody>
+            <tr><td><code>wraith stop</code></td><td>Stop a running wraith, or restore settings a crash left behind. Safe to run any time.</td></tr>
+            <tr><td><code>wraith doctor [--host h]</code></td><td>Check config, instance, system proxy, CA, Mac trust, simulators, interface and bypass.</td></tr>
+            <tr><td><code>wraith bypass add &lt;host&gt;…</code></td><td>Add hosts or <code>*.domain</code> patterns to the bypass list.</td></tr>
+            <tr><td><code>wraith bypass rm &lt;host&gt;…</code></td><td>Remove entries.</td></tr>
+            <tr><td><code>wraith bypass list</code></td><td>Show the list and the interface it uses.</td></tr>
+            <tr><td><code>wraith ca install [--sim UDID]</code></td><td>Install the CA into booted simulators, or one.</td></tr>
+            <tr><td><code>wraith ca remove</code></td><td>Remove the CA from every simulator.</td></tr>
+            <tr><td><code>wraith ca trust --mac [--yes]</code></td><td>Make the Mac trust the CA (asks first).</td></tr>
+            <tr><td><code>wraith ca untrust --mac</code></td><td>Remove it from the Mac keychain.</td></tr>
+            <tr><td><code>wraith ca export &lt;path&gt; [--force]</code></td><td>Write the CA certificate (PEM), never the key.</td></tr>
+            <tr><td><code>wraith ca rotate</code></td><td>Replace the CA (wraith must be stopped).</td></tr>
+            <tr><td><code>wraith export --har &lt;file&gt; [--no-redact] [--force]</code></td><td>Save the running wraith's flows as HAR.</td></tr>
+            <tr><td><code>wraith version</code></td><td>Print the version.</td></tr>
+          </tbody>
+        </table></div>
+        <h3>Exit codes</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>0</code></td><td>OK.</td></tr>
+            <tr><td><code>1</code></td><td>Runtime error: port in use, already running, nothing to export.</td></tr>
+            <tr><td><code>2</code></td><td>Usage error: unknown command or flag, invalid value, invalid config file.</td></tr>
+            <tr><td><code>3</code></td><td>System state: the proxy settings or the CA could not be changed, or <code>doctor</code> found a failure.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="security">
+        <h2>Security and privacy</h2>
+        <ul>
+          <li>wraith listens on 127.0.0.1 and ::1 only and closes any other peer before reading from it.</li>
+          <li>It runs as you and refuses to run as root; macOS asks for permissions itself when it needs to.</li>
+          <li>Captured traffic stays in memory and is gone when wraith stops. Only exports you ask for write files, mode 0600, redacted by default.</li>
+          <li>Log lines never contain header values or bodies.</li>
+          <li>Every upstream certificate is verified, except for hosts you name with <code>--insecure-upstream</code>.</li>
+          <li>wraith makes no network calls of its own: no telemetry, no update checks.</li>
+          <li>Your proxy settings are saved before any change and restored on exit, Ctrl-C, SIGTERM and after a crash.</li>
+        </ul>
+        <p>Report a vulnerability privately through <a href="https://github.com/esuEdu/wraith/security/advisories/new">GitHub</a>, never in a public issue. See the <a href="https://github.com/esuEdu/wraith/security/policy">security policy</a>.</p>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>Troubleshooting</h2>
+        <p>Start with <code>wraith doctor</code>; it names what is wrong and how to fix it.</p>
+        <h3>Websites stopped loading after wraith exited</h3>
+        <p>The system proxy still points at wraith (for example after a forced quit). Run <code>wraith stop</code>: it restores your settings even when wraith is not running.</p>
+        <h3>An app's requests do not appear</h3>
+        <ul>
+          <li>Is it in the source? The default is <code>simulator</code>; Mac apps need <code>app:&lt;name&gt;</code> or <code>all</code>.</li>
+          <li>Does it use the system proxy? Apps that ignore proxy settings bypass wraith completely.</li>
+          <li>A web page in the simulator shows as <code>com.apple.WebKit.Networking</code>, not as the app.</li>
+        </ul>
+        <h3>A host shows as <code>tunnel</code> instead of being decrypted</h3>
+        <p>The line says why: <code>no_decrypt</code>, pinned, idle preconnect, not TLS, or a Mac app the Mac does not trust the CA for. See <a href="#decryption">When a connection is not decrypted</a>.</p>
+        <h3>The simulator does not trust the CA</h3>
+        <p>Run <code>wraith ca install</code> with the simulator booted, then restart the app. <code>wraith doctor</code> lists each booted simulator and whether it trusts the CA.</p>
+        <h3>A bypassed host fails</h3>
+        <p>Run <code>wraith doctor --host &lt;host&gt;</code>. If the bypass fails over IPv4 and the host has no IPv6 address, your VPN blocks bypassing for that host.</p>
+        <h3>Port 9090 is in use</h3>
+        <p>Use another one: <code>wraith start --port 9191</code>, or set <code>port:</code> in the config.</p>
+      </section>
+
+      <section id="limits">
+        <h2>Limits</h2>
+        <ul>
+          <li>macOS only. Physical iPhones and Android devices are not supported.</li>
+          <li>Apps that ignore the system proxy are neither captured nor bypassed.</li>
+          <li>wraith shows traffic; it does not edit it (no breakpoints, rewrites or map-local).</li>
+          <li>HTTP/3 (QUIC) is not proxied; clients fall back to HTTP/2 or HTTP/1.1 through the proxy.</li>
+          <li>Bypass goes out on the physical interface only; SSH or WireGuard routes are not supported.</li>
+        </ul>
+      </section>
+    </article>
+  </div>
+</div>
+
+<footer class="site-footer gutter">
+  <div class="container">
+    <span>wraith · MIT license</span>
+    <span><a href="../">Home</a> · <a href="https://github.com/esuEdu/wraith">GitHub</a> · <a href="https://github.com/esuEdu/wraith/issues/new/choose">Report a bug</a></span>
+  </div>
+</footer>
+
+<script src="../assets/site.js"></script>
+</body>
+</html>
