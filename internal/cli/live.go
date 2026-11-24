@@ -112,7 +112,7 @@ func (l liveActions) Choices() ([]tui.Choice, error) {
 	if l.runningApps != nil {
 		apps, err := l.runningApps()
 		if err != nil {
-			errs = append(errs, fmt.Errorf("Mac apps: %w", err))
+			errs = append(errs, fmt.Errorf("listing running apps: %w", err))
 		}
 		for _, a := range apps {
 			note := "Mac app"
