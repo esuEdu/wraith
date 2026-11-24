@@ -24,6 +24,7 @@ import (
 	"github.com/esuEdu/wraith/internal/config"
 	"github.com/esuEdu/wraith/internal/control"
 	"github.com/esuEdu/wraith/internal/execx"
+	"github.com/esuEdu/wraith/internal/export"
 	"github.com/esuEdu/wraith/internal/home"
 	"github.com/esuEdu/wraith/internal/keychain"
 	"github.com/esuEdu/wraith/internal/proxy"
@@ -294,6 +295,12 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	defer func() { _ = lock.Unlock() }()
 
+	// Catch Ctrl-C and SIGTERM before anything changes on the Mac: a signal during
+	// start-up is delivered once start-up is done, and the shutdown below restores the
+	// system proxy. Without this, Go's default action would exit with it still set.
+	sigs, stopSignals := a.d.Signals()
+	defer stopSignals()
+
 	cfg, created, err := config.Load(h)
 	if err != nil {
 		return fail(ExitUsage, "%v", err)
@@ -373,7 +380,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	useTUI := !so.logMode && !so.jsonLog && a.d.IsTerminal()
 	printed, stopPrinting := (<-chan struct{})(closedChan()), func() {}
 	if !useTUI {
-		printed, stopPrinting = a.printFlows(flows, so.jsonLog)
+		printed, stopPrinting = a.printFlows(flows, so.jsonLog, export.NewRedactor(cfg.Export.RedactHeaders))
 	}
 	ctl, err := control.Listen(h, flows, cfg.Export.RedactHeaders)
 	if err != nil {
@@ -433,8 +440,6 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	} else {
 		a.info("listening on %s and set as the system proxy; Ctrl-C to stop and restore", addr)
 	}
-	sigs, stopSignals := a.d.Signals()
-	defer stopSignals()
 	actions := liveActions{live}
 	if a.d.OnActions != nil {
 		a.d.OnActions(actions)
@@ -653,12 +658,13 @@ func (n *simNames) name(udid string) string {
 
 // printFlows prints each flow added to the store as a log line (or JSON object), until
 // stop is called; done closes once the last line is out.
-func (a *app) printFlows(flows *store.Store, asJSON bool) (done <-chan struct{}, stop func()) {
+func (a *app) printFlows(flows *store.Store, asJSON bool, r export.Redactor) (done <-chan struct{}, stop func()) {
 	ch, stop := flows.Subscribe(4096)
 	d := make(chan struct{})
 	go func() {
 		defer close(d)
 		for f := range ch {
+			f.URL = r.URL(f.URL) // tokens in query strings stay out of scrollback and log files
 			line := formatFlow(f)
 			if asJSON {
 				line = formatFlowJSON(f)
