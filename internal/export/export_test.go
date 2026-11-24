@@ -1,6 +1,8 @@
 package export
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -106,6 +108,49 @@ func TestHARStructure(t *testing.T) {
 	}
 	if len(e.Request.QueryString) != 2 {
 		t.Fatalf("query %+v", e.Request.QueryString)
+	}
+}
+
+func TestHARHoldsDecodedBodies(t *testing.T) {
+	var z bytes.Buffer
+	zw := gzip.NewWriter(&z)
+	_, _ = zw.Write([]byte(`{"ok":true}`))
+	_ = zw.Close()
+	f := secretFlow()
+	f.RespHeader.Set("Content-Encoding", "gzip")
+	f.RespBody = store.Body{Data: z.Bytes(), Size: int64(z.Len())}
+	g := secretFlow()
+	g.RespHeader.Set("Content-Encoding", "br")
+	g.RespBody = store.Body{Data: []byte{0x8b, 0x05}, Size: 2}
+	b, err := HAR([]store.Flow{f, g}, NewRedactor(DefaultPatterns))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Log struct {
+			Entries []struct {
+				Comment  string
+				Response struct {
+					BodySize int64
+					Content  struct {
+						Size, Compression int64
+						Text, Encoding    string
+					}
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	r := doc.Log.Entries[0].Response
+	if r.Content.Text != `{"ok":true}` || r.Content.Encoding != "" || r.Content.Size != 11 ||
+		r.BodySize != int64(z.Len()) || r.Content.Compression != 11-int64(z.Len()) {
+		t.Fatalf("gzip response %+v", r)
+	}
+	e := doc.Log.Entries[1]
+	if e.Response.Content.Encoding != "base64" || !strings.Contains(e.Comment, "response body left as sent: br is not decoded") {
+		t.Fatalf("br response %+v, comment %q", e.Response.Content, e.Comment)
 	}
 }
 

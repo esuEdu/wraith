@@ -3,9 +3,12 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -58,6 +61,10 @@ type Model struct {
 	input    string // text being typed for the filter or the source
 	mode     mode
 	detailAt int // first line of the detail view on screen
+	detail   struct {
+		at, width int // the flow (index into flows) and width the lines were built for
+		lines     []string
+	}
 
 	width, height int
 	status        string
@@ -163,6 +170,7 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "x":
 		m.act.Clear()
 		m.flows, m.shown, m.cursor, m.offset, m.follow = nil, nil, 0, 0, true
+		m.detail.lines = nil
 		m.refilter()
 		m.say("cleared")
 	}
@@ -383,7 +391,13 @@ func (m *Model) footer() string {
 	return dim.Render(clip(help, m.width))
 }
 
-func (m *Model) renderDetail(f store.Flow) string {
+// detailLines are the lines of the detail view for f, cached per flow and width so a
+// large body is decoded and wrapped once, not on every key.
+func (m *Model) detailLines(f store.Flow) []string {
+	at := m.shown[m.cursor]
+	if m.detail.lines != nil && m.detail.at == at && m.detail.width == m.width {
+		return m.detail.lines
+	}
 	var lines []string
 	add := func(s string) { lines = append(lines, s) }
 	add(bold.Render(fmt.Sprintf(" %s %s", f.Method, f.URL)))
@@ -396,7 +410,7 @@ func (m *Model) renderDetail(f store.Flow) string {
 		add("")
 		add(dim.Render(" passed through without decrypting: no headers or bodies to show"))
 	} else {
-		section := func(title string, h map[string][]string, body store.Body) {
+		section := func(title string, h http.Header, body store.Body) {
 			add("")
 			add(bold.Render(" " + title))
 			for _, k := range sortedKeys(h) {
@@ -405,16 +419,26 @@ func (m *Model) renderDetail(f store.Flow) string {
 				}
 			}
 			add("")
-			add(" " + bodySummary(body))
-			if len(body.Data) > 0 && utf8.Valid(body.Data) {
-				for l := range strings.SplitSeq(string(body.Data), "\n") {
-					add(" " + l)
+			d := store.Decode(body, h.Get("Content-Encoding"))
+			text, ok := bodyText(d)
+			add(" " + bodySummary(body, d, ok))
+			if ok {
+				for l := range strings.SplitSeq(text, "\n") {
+					for _, w := range wrap(strings.TrimRight(l, "\r"), m.width-1) {
+						add(" " + w)
+					}
 				}
 			}
 		}
 		section("request", f.ReqHeader, f.ReqBody)
 		section("response", f.RespHeader, f.RespBody)
 	}
+	m.detail.at, m.detail.width, m.detail.lines = at, m.width, lines
+	return lines
+}
+
+func (m *Model) renderDetail(f store.Flow) string {
+	lines := m.detailLines(f)
 	rows := max(m.height-2, 1)
 	m.detailAt = min(m.detailAt, max(len(lines)-rows, 0))
 	var b strings.Builder
@@ -432,16 +456,79 @@ func (m *Model) renderDetail(f store.Flow) string {
 	return b.String()
 }
 
-func bodySummary(b store.Body) string {
-	switch {
-	case b.Size == 0:
-		return dim.Render("(no body)")
-	case !utf8.Valid(b.Data):
-		return dim.Render(fmt.Sprintf("(binary, %d bytes)", b.Size))
-	case b.Truncated:
-		return dim.Render(fmt.Sprintf("(%d bytes, first %d shown)", b.Size, len(b.Data)))
+// bodyText is a decoded body as text to show, pretty-printed when it is JSON; ok is
+// false for an empty or binary body.
+func bodyText(d store.Decoded) (text string, ok bool) {
+	data := d.Data
+	if d.Partial { // the cut may fall inside a character
+		for i := 0; i < utf8.UTFMax-1 && len(data) > 0 && !utf8.Valid(data); i++ {
+			data = data[:len(data)-1]
+		}
 	}
-	return dim.Render(fmt.Sprintf("(%d bytes)", b.Size))
+	if len(data) == 0 || !utf8.Valid(data) {
+		return "", false
+	}
+	var buf bytes.Buffer
+	if !d.Partial && json.Indent(&buf, data, "", "  ") == nil {
+		return buf.String(), true
+	}
+	return string(data), true
+}
+
+func bodySummary(b store.Body, d store.Decoded, text bool) string {
+	if b.Size == 0 {
+		return dim.Render("(no body)")
+	}
+	s := fmt.Sprintf("%d bytes", b.Size)
+	if d.Encoding != "" {
+		s += fmt.Sprintf(" %s, %d decoded", d.Encoding, len(d.Data))
+	}
+	if !text {
+		s = "binary, " + s
+	}
+	switch {
+	case d.Partial && d.Encoding == "":
+		s += fmt.Sprintf(", first %d shown", len(d.Data))
+	case d.Partial:
+		s += ", only the start"
+	}
+	if d.Err != "" {
+		s += "; " + d.Err
+	}
+	return dim.Render("(" + s + ")")
+}
+
+// wrap breaks s into pieces of at most width display cells.
+func wrap(s string, width int) []string {
+	if width <= 0 || len(s) <= width && isASCII(s) {
+		return []string{s}
+	}
+	var out []string
+	var cur strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := 1
+		if r >= utf8.RuneSelf {
+			rw = lipgloss.Width(string(r))
+		}
+		if w+rw > width && w > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+			w = 0
+		}
+		cur.WriteRune(r)
+		w += rw
+	}
+	return append(out, cur.String())
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func sortedKeys(h map[string][]string) []string { return slices.Sorted(maps.Keys(h)) }
