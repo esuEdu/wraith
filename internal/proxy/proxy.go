@@ -19,6 +19,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/esuEdu/wraith/internal/store"
 )
 
 // Limits from the Security spec, S5.1.
@@ -64,26 +66,12 @@ type Options struct {
 	// Nil puts every connection in the source, decryptable.
 	Classify func(ctx context.Context, client, local net.Addr) Verdict
 
+	// Store receives every flow inside the source; nil records nothing.
+	Store *store.Store
+
 	// Route names how an upstream host is reached, for the log: "vpn" or "direct" (R3.5).
 	// A failed "direct" dial is shown as "failed". Nil shows no route.
 	Route func(host string) string
-}
-
-// routeTag returns " <route>" for host[:port] (or "" without a Route function); a failed
-// bypass shows as "failed".
-func (s *Server) routeTag(hostport string, failed bool) string {
-	if s.opts.Route == nil {
-		return ""
-	}
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		host = h
-	}
-	r := s.opts.Route(strings.Trim(host, "[]"))
-	if failed && r == "direct" {
-		r = "failed"
-	}
-	return " " + r
 }
 
 // Verdict is Classify's answer for one client connection.
@@ -203,11 +191,11 @@ func New(opts Options) *Server {
 		FlushInterval: -1, // stream responses (SSE, long polls) without buffering
 		ErrorLog:      errLog,
 		ModifyResponse: func(resp *http.Response) error {
-			s.logFlow(resp.Request.Context(), "%s %s %d%s", resp.Request.Method, resp.Request.URL.Redacted(), resp.StatusCode, s.routeTag(resp.Request.URL.Host, false))
+			flowOf(resp.Request.Context()).response(resp)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.logFlow(r.Context(), "%s %s 502%s %v", r.Method, r.URL.Redacted(), s.routeTag(r.URL.Host, true), err)
+			flowOf(r.Context()).failed(http.StatusBadGateway, s.routeName(r.URL.Host, true), err.Error())
 			w.WriteHeader(http.StatusBadGateway)
 		},
 	}
@@ -293,7 +281,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request loops back to wraith", http.StatusLoopDetected)
 		return
 	}
-	s.rp.ServeHTTP(w, r)
+	s.rp.ServeHTTP(w, s.beginFlow(r, r.URL.Redacted(), r.URL.Host))
 }
 
 func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +301,7 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
 	up, err := s.dialUpstream(ctx, "tcp", target)
 	cancel()
 	if err != nil {
-		s.logFlow(r.Context(), "CONNECT %s 502%s %v", target, s.routeTag(target, true), err)
+		s.recordTunnel(r.Context(), start, target, http.StatusBadGateway, err.Error())
 		http.Error(w, "cannot reach "+target, http.StatusBadGateway)
 		return
 	}
@@ -337,9 +325,7 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
 		_ = up.Close()
 		return
 	}
-	s.logFlow(r.Context(), "CONNECT %s 200%s (%s)", target, s.routeTag(target, false), time.Since(start).Round(time.Millisecond))
-	v, _ := r.Context().Value(verdictKey{}).(Verdict)
-	s.tunnel(client, brw.Reader, up, target, v)
+	s.tunnel(r.Context(), start, client, brw.Reader, up, target)
 }
 
 // dialUpstream dials through the configured Dialer, giving up after DialTimeout, for

@@ -27,6 +27,7 @@ import (
 	"github.com/esuEdu/wraith/internal/route"
 	"github.com/esuEdu/wraith/internal/sim"
 	"github.com/esuEdu/wraith/internal/source"
+	"github.com/esuEdu/wraith/internal/store"
 	"github.com/esuEdu/wraith/internal/sysproxy"
 	"github.com/esuEdu/wraith/internal/version"
 )
@@ -197,6 +198,7 @@ func (a *app) startCmd() *cobra.Command {
 		maxBody       int64
 		noSystemProxy bool
 		logMode       bool
+		jsonLog       bool
 		noDecrypt     bool
 		insecure      []string
 	)
@@ -224,11 +226,11 @@ func (a *app) startCmd() *cobra.Command {
 			if f.Changed("max-body") {
 				o.MaxBodyBytes = &maxBody
 			}
-			_ = logMode // the only mode until M5
+			_ = logMode // the only mode until the live view (#40)
 			if len(insecure) > 0 && noDecrypt {
 				return fail(ExitUsage, "--insecure-upstream does not apply with --no-decrypt")
 			}
-			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: !noDecrypt, insecure: insecure})
+			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: !noDecrypt, insecure: insecure, jsonLog: jsonLog})
 		},
 	}
 	f := cmd.Flags()
@@ -239,12 +241,14 @@ func (a *app) startCmd() *cobra.Command {
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
 	f.BoolVar(&noSystemProxy, "no-system-proxy", false, "listen only; leave the system proxy settings alone")
 	f.BoolVar(&logMode, "log", false, "print one line per request instead of the live view")
+	f.BoolVar(&jsonLog, "json", false, "with --log: one JSON object per line")
 	f.BoolVar(&noDecrypt, "no-decrypt", false, "pass HTTPS through without decrypting it")
 	f.StringArrayVar(&insecure, "insecure-upstream", nil, "do not verify this host's certificate, e.g. a local dev server (repeatable)")
 	return cmd
 }
 
 type startOpts struct {
+	jsonLog       bool
 	noSystemProxy bool
 	decrypt       bool
 	insecure      []string
@@ -292,9 +296,9 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	if err != nil {
 		return fail(ExitRuntime, "cannot listen on port %d: %v", cfg.Port, err)
 	}
-	popts := proxy.Options{Logf: func(f string, args ...any) {
-		_, _ = fmt.Fprintf(a.d.Stdout, time.Now().Format("15:04:05")+" "+f+"\n", args...)
-	}}
+	// Flows go to the store (memory only, R5.2); the proxy's own notices go to stderr.
+	flows := store.New(cfg.Capture.MaxFlows, cfg.Capture.MaxBodyBytes)
+	popts := proxy.Options{Store: flows, Logf: func(f string, args ...any) { a.info(f, args...) }}
 	sm, smErr := a.simManager()
 	macTrusted := false
 	stopSimWatch := func() {}
@@ -340,6 +344,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
+	printed, stopPrinting := a.printFlows(flows, so.jsonLog)
 	for _, ln := range lns {
 		go func() { _ = srv.Serve(ln) }()
 	}
@@ -351,6 +356,8 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 		once.Do(func() {
 			stopSimWatch()
 			_ = srv.Close()
+			stopPrinting()
+			<-printed
 			if systemSet {
 				cleanupErr = sp.Restore(context.WithoutCancel(ctx))
 			}
@@ -585,4 +592,22 @@ func (n *simNames) name(udid string) string {
 		return udid[:8]
 	}
 	return udid
+}
+
+// printFlows prints each flow added to the store as a log line (or JSON object), until
+// stop is called; done closes once the last line is out.
+func (a *app) printFlows(flows *store.Store, asJSON bool) (done <-chan struct{}, stop func()) {
+	ch, stop := flows.Subscribe(4096)
+	d := make(chan struct{})
+	go func() {
+		defer close(d)
+		for f := range ch {
+			line := formatFlow(f)
+			if asJSON {
+				line = formatFlowJSON(f)
+			}
+			_, _ = fmt.Fprintln(a.d.Stdout, line)
+		}
+	}()
+	return d, stop
 }

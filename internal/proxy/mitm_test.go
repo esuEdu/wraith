@@ -19,6 +19,7 @@ import (
 
 	"github.com/esuEdu/wraith/internal/ca"
 	"github.com/esuEdu/wraith/internal/home"
+	"github.com/esuEdu/wraith/internal/store"
 )
 
 func newCA(t *testing.T) *ca.CA {
@@ -83,16 +84,34 @@ func (l *logSink) String() string {
 }
 
 type mitmEnv struct {
-	ca   *ca.CA
-	addr string
-	srv  *Server
-	log  *logSink
+	ca    *ca.CA
+	addr  string
+	srv   *Server
+	log   *logSink
+	store *store.Store
+}
+
+// waitFlow waits for a recorded flow matching match.
+func (e *mitmEnv) waitFlow(t *testing.T, what string, match func(store.Flow) bool) store.Flow {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, f := range e.store.Flows() {
+			if match(f) {
+				return f
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no flow %s; recorded: %+v", what, e.store.Flows())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func startMITM(t *testing.T, upstreamRoots *x509.CertPool, tweak func(*Options)) *mitmEnv {
 	t.Helper()
-	e := &mitmEnv{ca: newCA(t), log: &logSink{}}
-	opts := Options{Leaf: e.ca.Leaf, RootCAs: upstreamRoots, Logf: e.log.logf}
+	e := &mitmEnv{ca: newCA(t), log: &logSink{}, store: store.New(100, 1<<20)}
+	opts := Options{Leaf: e.ca.Leaf, RootCAs: upstreamRoots, Logf: e.log.logf, Store: e.store}
 	if tweak != nil {
 		tweak(&opts)
 	}
@@ -141,8 +160,9 @@ func TestDecryptsHTTP1(t *testing.T) {
 	if issuer := resp.TLS.PeerCertificates[0].Issuer.CommonName; !strings.HasPrefix(issuer, "wraith CA") {
 		t.Fatalf("client saw a certificate from %q, want the wraith CA", issuer)
 	}
-	if !e.log.has("GET " + ts.URL + "/one 200") {
-		t.Fatalf("decrypted request not logged:\n%s", e.log)
+	f := e.waitFlow(t, "for GET /one", func(f store.Flow) bool { return f.URL == ts.URL+"/one" })
+	if f.Kind != store.KindHTTP || f.Method != "GET" || f.Status != 200 || string(f.RespBody.Data) != "hello /one" || f.Proto != "HTTP/1.1" {
+		t.Fatalf("recorded %+v", f)
 	}
 }
 
@@ -215,9 +235,9 @@ func TestS2_3_UpstreamCertificateIsVerified(t *testing.T) {
 	if resp.StatusCode != http.StatusBadGateway || body == "secret" {
 		t.Fatalf("status %d body %q, want 502", resp.StatusCode, body)
 	}
-	if !e.log.has("upstream certificate rejected") {
-		t.Fatalf("log:\n%s", e.log)
-	}
+	e.waitFlow(t, "with the rejected certificate", func(f store.Flow) bool {
+		return f.Status == http.StatusBadGateway && strings.Contains(f.Err, "upstream certificate rejected")
+	})
 }
 
 func TestS2_3_UpstreamBelowTLS12IsRefused(t *testing.T) {
