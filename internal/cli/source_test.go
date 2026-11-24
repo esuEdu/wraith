@@ -161,3 +161,5 @@ func caPool(t *testing.T, e *env) *x509.CertPool {
 	p.AppendCertsFromPEM([]byte(readCAPEM(t, e)))
 	return p
 }
+
+func tlsConfig(roots *x509.CertPool) *tls.Config { return &tls.Config{RootCAs: roots} }
