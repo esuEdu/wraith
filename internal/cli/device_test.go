@@ -34,15 +34,25 @@ func TestS2_6_DevicesGetInOnlyWithTheSetupKey(t *testing.T) {
 	if d.Unlock(phone, "wrong", "") || d.Unlock(phone, "", "") || d.Admit(phone) != proxy.SetupOnly {
 		t.Fatal("a wrong key let the device in")
 	}
-	if !d.Unlock(phone, d.key, "") || !d.Unlock(phone, d.key, "") || d.Admit(phone) != proxy.Allowed {
-		t.Fatal("the setup key did not let the device in")
+	for range 2 { // twice: the second time says nothing new
+		if !d.Unlock(phone, d.key, "") {
+			t.Fatal("the setup key did not let the device in")
+		}
+	}
+	if d.Admit(phone) != proxy.Allowed {
+		t.Fatal("the device is not allowed after the setup key")
 	}
 	if !slices.Equal(allowed, []string{"192.168.0.23"}) {
 		t.Fatalf("allowed notices %v, want the phone once", allowed)
 	}
 	off := net.ParseIP("10.8.0.4")
-	if d.Admit(off) != proxy.Refused || d.Admit(off) != proxy.Refused || d.Unlock(off, d.key, "") {
-		t.Fatal("a peer off the Mac's network got in")
+	for range 2 { // twice: reported once
+		if d.Admit(off) != proxy.Refused {
+			t.Fatal("a peer off the Mac's network got in")
+		}
+	}
+	if d.Unlock(off, d.key, "") {
+		t.Fatal("a peer off the Mac's network was allowed with the key")
 	}
 	if len(notices) != 1 {
 		t.Fatalf("notices %q: an outside peer is reported once", notices)

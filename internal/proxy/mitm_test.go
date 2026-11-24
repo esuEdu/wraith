@@ -66,17 +66,6 @@ func (l *logSink) logf(f string, a ...any) {
 	l.lines = append(l.lines, fmt.Sprintf(f, a...))
 }
 
-func (l *logSink) has(sub string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for _, s := range l.lines {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
-}
-
 func (l *logSink) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -422,6 +411,6 @@ type hangUpAfterWrite struct{ net.Conn }
 
 func (c hangUpAfterWrite) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
-	_ = c.Conn.Close()
+	_ = c.Close()
 	return n, err
 }

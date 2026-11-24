@@ -120,22 +120,6 @@ func (s *Server) verdictFor(ctx context.Context) Verdict {
 	return ci.v
 }
 
-// logFlow logs a line about a request or tunnel, unless its connection is outside the
-// source (R1.3: never shown). The verdict travels in the request's context.
-func (s *Server) logFlow(ctx context.Context, format string, args ...any) {
-	v, ok := ctx.Value(verdictKey{}).(Verdict)
-	if !ok {
-		v = Verdict{InSource: true}
-	}
-	if !v.InSource {
-		return
-	}
-	if v.Label != "" {
-		format = "[" + strings.ReplaceAll(v.Label, "%", "%%") + "] " + format
-	}
-	s.opts.Logf(format, args...)
-}
-
 func (o *Options) fill() {
 	if o.Dialer == nil {
 		o.Dialer = &net.Dialer{}
@@ -465,11 +449,6 @@ func (l *guardListener) Accept() (net.Conn, error) {
 		}
 		return cc, nil
 	}
-}
-
-func isLoopback(a net.Addr) bool {
-	ta, ok := a.(*net.TCPAddr)
-	return ok && ta.IP.IsLoopback()
 }
 
 // FromThisMac reports whether a connection came from this Mac: over loopback, or from
