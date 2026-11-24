@@ -5,7 +5,9 @@ A terminal proxy for macOS that does two things:
 - **Inspect** HTTP/HTTPS traffic from a source you choose (the iOS Simulator, one Mac app, one process, or everything). Everything else passes through untouched.
 - **Route** chosen domains around your VPN, through the physical network interface.
 
-> Status: pre-alpha. Milestone M0 (spikes) in progress. See [docs/SPEC.md](docs/SPEC.md).
+**Website and docs: https://esuedu.github.io/wraith/**
+
+> Status: feature-complete for v1 (milestones M0–M5 done); the v1.0.0 Homebrew release (M6) is in progress. See [docs/SPEC.md](docs/SPEC.md).
 
 ## M0 spikes
 
