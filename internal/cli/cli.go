@@ -13,9 +13,11 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/esuEdu/wraith/internal/ca"
@@ -30,6 +32,7 @@ import (
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/store"
 	"github.com/esuEdu/wraith/internal/sysproxy"
+	"github.com/esuEdu/wraith/internal/tui"
 	"github.com/esuEdu/wraith/internal/version"
 )
 
@@ -62,6 +65,10 @@ type Deps struct {
 	SimPoll time.Duration
 	// Lookup identifies the process behind a client connection; nil uses source.Resolver.
 	Lookup func(ctx context.Context, clientPort, proxyPort int) (source.Origin, error)
+	// IsTerminal reports whether stdout is a terminal (the live view); nil checks os.Stdout.
+	IsTerminal func() bool
+	// OnActions, if set, receives the running instance's live actions (tests use it).
+	OnActions func(tui.Actions)
 }
 
 func (d *Deps) fill() {
@@ -92,6 +99,9 @@ func (d *Deps) fill() {
 	}
 	if d.StopTimeout <= 0 {
 		d.StopTimeout = 10 * time.Second
+	}
+	if d.IsTerminal == nil {
+		d.IsTerminal = func() bool { return isTerminal(os.Stdout) }
 	}
 	if d.SimPoll <= 0 {
 		d.SimPoll = 2 * time.Second
@@ -131,7 +141,20 @@ func Main(ctx context.Context, args []string, d Deps) int {
 	return ExitUsage // cobra's own errors: unknown command or flag, bad flag value
 }
 
-type app struct{ d Deps }
+type app struct {
+	d  Deps
+	ui atomic.Pointer[tea.Program] // the live view, while it runs
+}
+
+// notice reports something that happens while wraith runs: in the live view's status line
+// when it is on screen, on stderr otherwise.
+func (a *app) notice(format string, args ...any) {
+	if p := a.ui.Load(); p != nil {
+		p.Send(tui.NoticeMsg(fmt.Sprintf(format, args...)))
+		return
+	}
+	a.info(format, args...)
+}
 
 func (a *app) info(format string, args ...any) {
 	_, _ = fmt.Fprintf(a.d.Stderr, "wraith: "+format+"\n", args...)
@@ -225,11 +248,10 @@ func (a *app) startCmd() *cobra.Command {
 			if f.Changed("max-body") {
 				o.MaxBodyBytes = &maxBody
 			}
-			_ = logMode // the only mode until the live view (#40)
 			if len(insecure) > 0 && noDecrypt {
 				return fail(ExitUsage, "--insecure-upstream does not apply with --no-decrypt")
 			}
-			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: !noDecrypt, insecure: insecure, jsonLog: jsonLog})
+			return a.start(cmd.Context(), o, startOpts{noSystemProxy: noSystemProxy, decrypt: !noDecrypt, insecure: insecure, logMode: logMode, jsonLog: jsonLog})
 		},
 	}
 	f := cmd.Flags()
@@ -239,7 +261,7 @@ func (a *app) startCmd() *cobra.Command {
 	f.IntVar(&maxFlows, "max-flows", 5000, "flows kept in memory")
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
 	f.BoolVar(&noSystemProxy, "no-system-proxy", false, "listen only; leave the system proxy settings alone")
-	f.BoolVar(&logMode, "log", false, "print one line per request instead of the live view")
+	f.BoolVar(&logMode, "log", false, "print one line per request instead of the live view (the default when stdout is not a terminal)")
 	f.BoolVar(&jsonLog, "json", false, "with --log: one JSON object per line")
 	f.BoolVar(&noDecrypt, "no-decrypt", false, "pass HTTPS through without decrypting it")
 	f.StringArrayVar(&insecure, "insecure-upstream", nil, "do not verify this host's certificate, e.g. a local dev server (repeatable)")
@@ -247,6 +269,7 @@ func (a *app) startCmd() *cobra.Command {
 }
 
 type startOpts struct {
+	logMode       bool
 	jsonLog       bool
 	noSystemProxy bool
 	decrypt       bool
@@ -297,7 +320,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	// Flows go to the store (memory only, R5.2); the proxy's own notices go to stderr.
 	flows := store.New(cfg.Capture.MaxFlows, cfg.Capture.MaxBodyBytes)
-	popts := proxy.Options{Store: flows, Logf: func(f string, args ...any) { a.info(f, args...) }}
+	popts := proxy.Options{Store: flows, Logf: a.notice}
 	sm, smErr := a.simManager()
 	macTrusted := false
 	stopSimWatch := func() {}
@@ -317,7 +340,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 			watchDone := make(chan struct{})
 			go func() {
 				defer close(watchDone)
-				sm.Watch(watchCtx, a.d.SimPoll, certPath(h), c.SHA256(), a.info)
+				sm.Watch(watchCtx, a.d.SimPoll, certPath(h), c.SHA256(), a.notice)
 			}()
 			stopSimWatch = func() { cancel(); <-watchDone }
 		}
@@ -326,12 +349,16 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	if err != nil {
 		return fail(ExitUsage, "%v", err)
 	}
-	popts.Classify = a.classifier(src, sm, macTrusted)
 
 	// R3.3: every connection is dialed through the router, whatever its source.
 	rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
 	router := route.New(rctx, a.d.Runner, cfg.Bypass, cfg.Interface)
 	rcancel()
+	live := newLiveState(h, cfg, src, flows, router)
+	if popts.Leaf != nil {
+		popts.Decrypt = live.decrypt
+	}
+	popts.Classify = a.classifier(&live.src, sm, macTrusted)
 	popts.Dialer = router
 	popts.Route = func(host string) string { r, _ := router.Route(host); return r }
 	if len(cfg.Bypass) > 0 {
@@ -343,7 +370,11 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
-	printed, stopPrinting := a.printFlows(flows, so.jsonLog)
+	useTUI := !so.logMode && !so.jsonLog && a.d.IsTerminal()
+	printed, stopPrinting := (<-chan struct{})(closedChan()), func() {}
+	if !useTUI {
+		printed, stopPrinting = a.printFlows(flows, so.jsonLog)
+	}
 	ctl, err := control.Listen(h, flows, cfg.Export.RedactHeaders)
 	if err != nil {
 		a.info("warning: `wraith export` will not reach this instance: %v", err)
@@ -404,13 +435,32 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	sigs, stopSignals := a.d.Signals()
 	defer stopSignals()
+	actions := liveActions{live}
+	if a.d.OnActions != nil {
+		a.d.OnActions(actions)
+	}
+	var ui *tea.Program
+	uiDone := make(chan struct{})
+	if useTUI {
+		ui = a.runTUI(ctx, actions, addr, flows, uiDone)
+	}
 	if a.d.Ready != nil {
 		a.d.Ready(addr)
 	}
 	select {
 	case s := <-sigs:
+		if ui != nil {
+			ui.Quit()
+			<-uiDone
+		}
 		a.info("received %s, shutting down", s)
+	case <-uiDone:
+		a.info("shutting down")
 	case <-ctx.Done():
+		if ui != nil {
+			ui.Quit()
+			<-uiDone
+		}
 	}
 	if err := cleanup(); err != nil { // sysproxy logs "system proxy settings restored"
 		return fail(ExitState, "%v", err)
@@ -521,7 +571,8 @@ func (a *app) setupDecryption(h *home.Home, cfg config.Config, insecure []string
 // classifier builds the proxy's per-connection decision (R1): identify the process,
 // match it against the source, and allow decryption for simulator processes, or for Mac
 // processes when the Mac trusts the CA.
-func (a *app) classifier(src source.Source, sm *sim.Manager, macTrusted bool) func(context.Context, net.Addr, net.Addr) proxy.Verdict {
+func (a *app) classifier(cur *atomic.Pointer[source.Source], sm *sim.Manager, macTrusted bool) func(context.Context, net.Addr, net.Addr) proxy.Verdict {
+	src := *cur.Load()
 	lookup := a.d.Lookup
 	if lookup == nil {
 		lookup = source.NewResolver(a.d.Runner).Lookup
@@ -542,7 +593,7 @@ func (a *app) classifier(src source.Source, sm *sim.Manager, macTrusted bool) fu
 			return proxy.Verdict{}
 		}
 		o, err := lookup(ctx, c.Port, l.Port)
-		if err != nil || !src.Matches(o, names.name) {
+		if err != nil || !cur.Load().Matches(o, names.name) { // R1.5: the source as of now
 			return proxy.Verdict{} // R1.3, R1.4: outside the source, untouched and unseen
 		}
 		label := o.Label()
@@ -616,4 +667,37 @@ func (a *app) printFlows(flows *store.Store, asJSON bool) (done <-chan struct{},
 		}
 	}()
 	return d, stop
+}
+
+// runTUI starts the live view; done closes when it exits (q, ctrl+c, or Quit).
+func (a *app) runTUI(ctx context.Context, actions tui.Actions, addr string, flows *store.Store, done chan struct{}) *tea.Program {
+	ch, stopSub := flows.Subscribe(4096) // before the snapshot: the model drops repeats
+	model := tui.New(actions, addr, flows.Flows())
+	opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithInput(a.d.Stdin), tea.WithOutput(a.d.Stdout)}
+	if f, ok := a.d.Stdout.(*os.File); !ok || !isTerminal(f) {
+		opts = append(opts, tea.WithWindowSize(120, 30)) // no terminal to ask (tests)
+	}
+	p := tea.NewProgram(model, opts...)
+	a.ui.Store(p)
+	go func() {
+		for f := range ch {
+			p.Send(tui.FlowMsg(f))
+		}
+	}()
+	go func() {
+		defer close(done)
+		_, err := p.Run()
+		a.ui.Store(nil)
+		if err != nil && !errors.Is(err, tea.ErrProgramKilled) {
+			a.info("live view: %v", err)
+		}
+		stopSub()
+	}()
+	return p
+}
+
+func closedChan() chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
 }

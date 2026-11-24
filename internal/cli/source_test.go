@@ -91,6 +91,7 @@ func TestR1_1_MacAppsInTheSourceAreDecryptedOnlyWhenTheMacTrustsTheCA(t *testing
 		}
 		resp, body := fetch(t, addr, ts.URL+"/x", roots)
 		issuer := resp.TLS.PeerCertificates[0].Issuer.CommonName
+		waitUntil(t, "the flow line", func() bool { return strings.Contains(e.stdout.String(), "[curl] ") })
 		e.sigs <- syscall.SIGTERM
 		waitExit(t, done)
 		decrypted := strings.HasPrefix(issuer, "wraith CA")
@@ -147,6 +148,7 @@ func TestR1_1_SimulatorByNameMatchesFromTheFirstConnection(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM([]byte(readCAPEM(t, e)))
 	resp, _ := fetch(t, addr, ts.URL+"/first", roots)
+	waitUntil(t, "the flow line", func() bool { return strings.Contains(e.stdout.String(), "/first 200") })
 	e.sigs <- syscall.SIGTERM
 	waitExit(t, done)
 	if !strings.HasPrefix(resp.TLS.PeerCertificates[0].Issuer.CommonName, "wraith CA") ||

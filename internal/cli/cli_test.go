@@ -135,6 +135,7 @@ func (e *env) deps() Deps {
 		},
 		Ready:         func(addr string) { e.ready <- addr },
 		StopTimeout:   5 * time.Second,
+		IsTerminal:    func() bool { return false },
 		SimDevicesDir: e.sims.Dir,
 		SimPoll:       10 * time.Millisecond,
 		Lookup: func(context.Context, int, int) (source.Origin, error) {
@@ -414,6 +415,7 @@ func TestNoSystemProxyServesAndLogsWithoutTouchingSettings(t *testing.T) {
 	if string(body) != "ok" {
 		t.Fatalf("body %q", body)
 	}
+	waitUntil(t, "the flow line", func() bool { return strings.Contains(e.stdout.String(), "GET "+upstream.URL+"/hello 200") })
 	e.sigs <- syscall.SIGTERM
 	waitExit(t, done)
 	if !strings.Contains(e.stdout.String(), "GET "+upstream.URL+"/hello 200") {
@@ -458,9 +460,11 @@ func TestDecryptCreatesTheCAAndDecrypts(t *testing.T) {
 	if string(body) != "decrypted" || !strings.HasPrefix(resp.TLS.PeerCertificates[0].Issuer.CommonName, "wraith CA") {
 		t.Fatalf("body %q issuer %q", body, resp.TLS.PeerCertificates[0].Issuer.CommonName)
 	}
+	waitUntil(t, "the flow line", func() bool { return strings.Contains(e.stdout.String(), "/x 200") })
 	e.sigs <- syscall.SIGTERM
 	waitExit(t, done)
-	if !strings.Contains(e.stdout.String(), "[sim iPhone 18 Pro Max · Shop] GET "+upstream.URL+"/x 200") {
+	// The device name loads in the background; the first line may still show the UDID.
+	if !strings.Contains(e.stdout.String(), " · Shop] GET "+upstream.URL+"/x 200") {
 		t.Fatalf("stdout:\n%s", e.stdout)
 	}
 }

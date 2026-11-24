@@ -83,6 +83,7 @@ func TestR5_2_CapturedTrafficIsNeverWrittenToDisk(t *testing.T) {
 	for i := range 5 {
 		_, _ = fetch(t, addr, ts.URL+"/secret/"+string(rune('a'+i)), roots)
 	}
+	waitUntil(t, "the flow line", func() bool { return strings.Contains(e.stdout.String(), "/secret/e 200") })
 	after := files()
 	e.sigs <- syscall.SIGTERM
 	waitExit(t, done)

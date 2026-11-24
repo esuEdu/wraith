@@ -222,3 +222,14 @@ func TestR6_2_BypassListIsWrittenBackKeepingComments(t *testing.T) {
 		t.Fatalf("empty list not written as []:\n%s", b)
 	}
 }
+
+func TestNoDecryptListIsWrittenBack(t *testing.T) {
+	h := openHome(t)
+	if err := WriteNoDecrypt(h, []string{"*.apple.com", "pinned.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(h)
+	if err != nil || strings.Join(cfg.NoDecrypt, ",") != "*.apple.com,pinned.example.com" || len(cfg.Bypass) != 0 {
+		t.Fatalf("cfg %+v, %v", cfg, err)
+	}
+}

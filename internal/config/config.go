@@ -273,10 +273,18 @@ func MatchesAny(patterns []string, host string) bool {
 	return false
 }
 
-// WriteBypass replaces the bypass list in config.yaml with patterns (R6.2), editing the
-// YAML document in place so the rest of the file and its comments stay. patterns must
-// already be normalized. A missing file starts from DefaultYAML.
-func WriteBypass(h *home.Home, patterns []string) error {
+// WriteBypass replaces the bypass list in config.yaml with patterns (R6.2).
+func WriteBypass(h *home.Home, patterns []string) error { return writeList(h, "bypass", patterns) }
+
+// WriteNoDecrypt replaces the no_decrypt list in config.yaml with patterns.
+func WriteNoDecrypt(h *home.Home, patterns []string) error {
+	return writeList(h, "no_decrypt", patterns)
+}
+
+// writeList replaces one top-level list in config.yaml, editing the YAML document in
+// place so the rest of the file and its comments stay. patterns must already be
+// normalized. A missing file starts from DefaultYAML.
+func writeList(h *home.Home, key string, patterns []string) error {
 	b, err := h.ReadFile(FileName)
 	if errors.Is(err, fs.ErrNotExist) {
 		b = []byte(DefaultYAML)
@@ -295,14 +303,14 @@ func WriteBypass(h *home.Home, patterns []string) error {
 	root := doc.Content[0]
 	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	if len(patterns) == 0 {
-		seq.Style = yaml.FlowStyle // bypass: []
+		seq.Style = yaml.FlowStyle // key: []
 	}
 	for _, p := range patterns {
 		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: yaml.DoubleQuotedStyle})
 	}
 	found := false
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "bypass" {
+		if root.Content[i].Value == key {
 			old := root.Content[i+1]
 			seq.LineComment, seq.HeadComment, seq.FootComment = old.LineComment, old.HeadComment, old.FootComment
 			root.Content[i+1] = seq
@@ -311,7 +319,7 @@ func WriteBypass(h *home.Home, patterns []string) error {
 		}
 	}
 	if !found {
-		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "bypass"}, seq)
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, seq)
 	}
 	var out bytes.Buffer
 	enc := yaml.NewEncoder(&out)
