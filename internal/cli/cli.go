@@ -20,6 +20,7 @@ import (
 
 	"github.com/esuEdu/wraith/internal/ca"
 	"github.com/esuEdu/wraith/internal/config"
+	"github.com/esuEdu/wraith/internal/control"
 	"github.com/esuEdu/wraith/internal/execx"
 	"github.com/esuEdu/wraith/internal/home"
 	"github.com/esuEdu/wraith/internal/keychain"
@@ -143,10 +144,8 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd(), a.doctorCmd())
-	for _, p := range []struct{ name, short, milestone string }{
-		{"export", "save captured flows as HAR", "M5"},
-	} {
+	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd(), a.doctorCmd(), a.exportCmd())
+	for _, p := range []struct{ name, short, milestone string }{} {
 		root.AddCommand(&cobra.Command{
 			Use:                p.name,
 			Short:              p.short + " (planned, " + p.milestone + ")",
@@ -345,6 +344,10 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
 	printed, stopPrinting := a.printFlows(flows, so.jsonLog)
+	ctl, err := control.Listen(h, flows, cfg.Export.RedactHeaders)
+	if err != nil {
+		a.info("warning: `wraith export` will not reach this instance: %v", err)
+	}
 	for _, ln := range lns {
 		go func() { _ = srv.Serve(ln) }()
 	}
@@ -356,6 +359,9 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 		once.Do(func() {
 			stopSimWatch()
 			_ = srv.Close()
+			if ctl != nil {
+				_ = ctl.Close()
+			}
 			stopPrinting()
 			<-printed
 			if systemSet {
