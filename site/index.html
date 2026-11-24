@@ -42,7 +42,7 @@
           <a class="button primary" href="docs/#quick-start">Quick start</a>
           <a class="button" href="docs/">Read the docs</a>
         </div>
-        <p class="note">Homebrew install arrives with v1.0.0. Until then, <a href="docs/#install">build from source</a>.</p>
+        <p class="note">Homebrew builds it from source on your Mac. <a href="https://github.com/esuEdu/wraith/releases/latest">Release notes</a></p>
       </div>
 
       <figure class="terminal" aria-label="The wraith live view, showing flows from an app in the iPhone 17 simulator">
@@ -166,7 +166,7 @@
       <h2 id="start-title">Start in a minute</h2>
       <p class="intro">macOS 13 or later, Apple Silicon or Intel. Xcode for simulators.</p>
       <ol class="steps">
-        <li><h3>Install</h3><p>From Homebrew (v1.0.0 and later), or build from source.</p><pre class="block">brew install esuEdu/tap/wraith</pre></li>
+        <li><h3>Install</h3><p>With Homebrew, which builds it on your Mac.</p><pre class="block">brew install esuEdu/tap/wraith</pre></li>
         <li><h3>Boot a simulator</h3><p>Any iOS simulator. wraith puts its CA into each one as it boots.</p><pre class="block">xcrun simctl boot "iPhone 17" &amp;&amp; open -a Simulator</pre></li>
         <li><h3>Start wraith</h3><p>It sets the system proxy and opens the live view. Use your app and watch its requests arrive.</p><pre class="block">wraith start</pre></li>
         <li><h3>Stop</h3><p>Press <kbd>q</kbd> or Ctrl-C. Your proxy settings are restored.</p></li>
