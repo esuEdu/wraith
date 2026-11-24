@@ -381,3 +381,51 @@ func TestFlowsAlreadyShownAreNotRepeated(t *testing.T) {
 		t.Fatalf("%d flows, want 3", len(m.flows))
 	}
 }
+
+func TestS2_6_DeviceSetupShowsTheQRCode(t *testing.T) {
+	act := &fakeActions{source: "device"}
+	m := New(act, "127.0.0.1:9090", nil)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m.SetDevices(DeviceSetup{Addr: "192.168.0.12:9090", URL: "http://192.168.0.12:9090/?key=abcdefghij", Warning: "the macOS firewall blocks wraith"})
+	out := screen(m)
+	for _, want := range []string{"devices 192.168.0.12:9090", "Scan the code", "server 192.168.0.12  port 9090", "?key=abcdefghij", "firewall blocks wraith", "▀▀▀", "d device"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	m.Update(FlowMsg(flows()[0])) // once traffic arrives the list replaces the panel; d shows it again
+	if strings.Contains(screen(m), "Scan the code") {
+		t.Fatal("the panel hides the flows")
+	}
+	press(m, "d")
+	if !strings.Contains(screen(m), "Scan the code") {
+		t.Fatal("d does not show the panel")
+	}
+	press(m, "esc")
+	if strings.Contains(screen(m), "Scan the code") {
+		t.Fatal("esc does not close the panel")
+	}
+	if len(QR(strings.Repeat("x", 4000))) != 0 || len(QR("http://192.168.0.12:9090/?key=abcdefghij")) == 0 {
+		t.Fatal("QR")
+	}
+}
+
+func TestTunnelsSayWhyTheyWereNotDecrypted(t *testing.T) {
+	act := &fakeActions{source: "device"}
+	m := New(act, "127.0.0.1:9090", []store.Flow{
+		{ID: 1, Kind: store.KindTunnel, Method: "CONNECT", URL: "wps.apple.com:443", Status: 200, Err: "passed through: on no_decrypt"},
+		{ID: 2, Kind: store.KindTunnel, Method: "CONNECT", URL: "api.bank.test:443", Status: 0, Err: "rejected wraith's certificate (tls: bad certificate): the app pins, or the device does not trust the wraith CA yet; passed through for 30s, then tried again"},
+		{ID: 3, Kind: store.KindTunnel, Method: "CONNECT", URL: "api.bank.test:443", Status: 200, Err: "passed through: this client rejected wraith's certificate for it a moment ago (pinned, or the CA is not trusted yet); it is tried again soon"},
+	})
+	m.Update(tea.WindowSizeMsg{Width: 140, Height: 20})
+	out := screen(m)
+	for _, want := range []string{"wps.apple.com:443  no_decrypt", "ERR CONNECT", "api.bank.test:443  certificate rejected", "api.bank.test:443  rejected earlier, retried soon"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	press(m, "g", "enter")
+	if out := screen(m); !strings.Contains(out, "why: passed through: on no_decrypt") || strings.Contains(out, "error:") {
+		t.Fatalf("details:\n%s", out)
+	}
+}

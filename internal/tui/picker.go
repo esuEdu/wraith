@@ -53,12 +53,16 @@ func (m *Model) entries() []Choice {
 			sims++
 		}
 	}
+	allNote := "every process on this Mac"
+	if m.dev.Addr != "" {
+		allNote += ", and every device you allowed"
+	}
 	simNote := "every booted simulator"
 	if !m.pick.loading {
 		simNote = fmt.Sprintf("every booted simulator (%d now)", sims)
 	}
 	all := append([]Choice{
-		{Source: "all", Label: "all", Note: "every process on this Mac"},
+		{Source: "all", Label: "all", Note: allNote},
 		{Source: "simulator", Label: "simulator", Note: simNote},
 	}, m.pick.choices...)
 	if strings.TrimSpace(m.input) == "" {

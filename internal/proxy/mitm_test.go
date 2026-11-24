@@ -220,8 +220,57 @@ func TestR2_4_RejectedCertificateSwitchesHostToPassThrough(t *testing.T) {
 	if err != nil || body != "ok" || !resp.TLS.PeerCertificates[0].Equal(ts.Certificate()) {
 		t.Fatalf("second request: body %q err %v", body, err)
 	}
-	if !e.log.has("passing 127.0.0.1 through from now on") {
-		t.Fatalf("log:\n%s", e.log)
+	var rejected []store.Flow
+	for _, f := range e.store.Flows() {
+		if f.Status == 0 {
+			rejected = append(rejected, f)
+		}
+	}
+	if len(rejected) != 1 || !strings.Contains(rejected[0].Err, "rejected wraith's certificate") || !strings.Contains(rejected[0].Err, "passed through for 30s") {
+		t.Fatalf("the rejection is not shown: %+v", e.store.Flows())
+	}
+
+	// The pass-through is temporary: a device that trusts the CA a moment later is
+	// decrypted again; a client that keeps rejecting it waits longer each time.
+	now := time.Now()
+	e.srv.mu.Lock()
+	e.srv.now = func() time.Time { return now.Add(31 * time.Second) }
+	e.srv.mu.Unlock()
+	if len(e.srv.Pinned()) != 0 {
+		t.Fatal("still passed through after 30s")
+	}
+	if w := e.srv.markPinned(Verdict{}, "127.0.0.1"); w != 5*time.Minute {
+		t.Fatalf("second wait %s", w)
+	}
+	if w := e.srv.markPinned(Verdict{}, "127.0.0.1"); w != 24*time.Hour {
+		t.Fatalf("third wait %s", w)
+	}
+	if e.srv.isPinned(Verdict{Label: "another app"}, "127.0.0.1") {
+		t.Fatal("one client's rejection passes the host through for another")
+	}
+}
+
+func TestR2_4_AClientThatJustClosesIsNotPinning(t *testing.T) {
+	ts := upstreamServer(t, false, func(w http.ResponseWriter, r *http.Request) {})
+	target := strings.TrimPrefix(ts.URL, "https://")
+	e := startMITM(t, poolOf(ts.Certificate()), nil)
+	conn, err := net.Dial("tcp", e.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	br := bufio.NewReader(conn)
+	if resp, err := http.ReadResponse(br, nil); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("CONNECT: %v", err)
+	}
+	// The client sends its ClientHello and hangs up mid-handshake, as a cancelled
+	// preconnect does: no alert, so no rejection.
+	tc := tls.Client(hangUpAfterWrite{conn}, &tls.Config{ServerName: "example.test"})
+	_ = tc.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = tc.Handshake()
+	time.Sleep(200 * time.Millisecond)
+	if len(e.srv.Pinned()) != 0 {
+		t.Fatalf("pinned %v", e.srv.Pinned())
 	}
 }
 
@@ -367,4 +416,12 @@ func FuzzS5_4_ParseClientHello(f *testing.F) {
 			t.Fatalf("server name %q not in input", h.serverName)
 		}
 	})
+}
+
+type hangUpAfterWrite struct{ net.Conn }
+
+func (c hangUpAfterWrite) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	_ = c.Conn.Close()
+	return n, err
 }

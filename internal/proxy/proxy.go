@@ -1,6 +1,7 @@
-// Package proxy is wraith's HTTP proxy: a loopback-only listener that splices CONNECT
-// tunnels and forwards plain HTTP requests. Decryption (M2), source filtering (M3) and
-// bypass routing (M4) plug into it later; for now every connection passes through.
+// Package proxy is wraith's HTTP proxy: it splices CONNECT tunnels, forwards plain HTTP
+// requests, decrypts the tunnels of the capture source and routes around the VPN. It
+// listens on loopback; only with devices on does it also listen on one address of the
+// local network, and then a peer there gets in only once the user allows it (S2.6).
 package proxy
 
 import (
@@ -72,7 +73,25 @@ type Options struct {
 	// Route names how an upstream host is reached, for the log: "vpn" or "direct" (R3.5).
 	// A failed "direct" dial is shown as "failed". Nil shows no route.
 	Route func(host string) string
+
+	// Admit decides how far a peer that is not on this Mac gets (S2.6). Nil refuses
+	// every such peer (S2.1).
+	Admit func(peer net.IP) Access
+	// Unlock is called when a device opens the setup page with a key; it reports whether
+	// the key was right, and then the device is Allowed from now on.
+	Unlock func(peer net.IP, key, userAgent string) bool
+	// CACert is the CA certificate (PEM) wraith hands out at /ca to allowed devices.
+	CACert []byte
 }
+
+// Access is how far a device on the network gets (S2.6).
+type Access int
+
+const (
+	Refused   Access = iota // closed before a byte is read
+	SetupOnly               // may open the setup page, nothing else
+	Allowed                 // may use the proxy
+)
 
 // Verdict is Classify's answer for one client connection.
 type Verdict struct {
@@ -154,7 +173,9 @@ type Server struct {
 	clients   map[*clientConn]struct{} // counted against MaxConns
 	upstreams map[net.Conn]struct{}    // tunnel upstreams, closed on Close
 	selfPorts map[string]bool          // ports we listen on, for loop detection
-	pinned    map[string]bool          // hosts whose clients rejected our certificate
+	selfIPs   map[string]bool          // non-loopback addresses we listen on, likewise
+	pinned    map[string]pin           // client and host → its rejections of our certificate
+	now       func() time.Time
 }
 
 // New returns a Server with opts, defaults filled in.
@@ -165,7 +186,9 @@ func New(opts Options) *Server {
 		clients:   map[*clientConn]struct{}{},
 		upstreams: map[net.Conn]struct{}{},
 		selfPorts: map[string]bool{},
-		pinned:    map[string]bool{},
+		selfIPs:   map[string]bool{},
+		pinned:    map[string]pin{},
+		now:       time.Now,
 	}
 	errLog := log.New(logfWriter(opts.Logf), "", 0)
 
@@ -233,12 +256,29 @@ func Listen(port int) ([]net.Listener, error) {
 	return []net.Listener{v4, v6}, nil
 }
 
+// ListenDevice opens a listener on ip, one private address of the Mac on the local
+// network, so devices there can use the proxy (S2.6). It never listens on every address:
+// an unspecified, loopback or public ip is refused. Only peers Options.Admit allows get in.
+func ListenDevice(ip net.IP, port int) (net.Listener, error) {
+	if !ip.IsPrivate() {
+		return nil, fmt.Errorf("%s is not a private address on the local network", ip)
+	}
+	network := "tcp4"
+	if ip.To4() == nil {
+		network = "tcp6"
+	}
+	return net.Listen(network, net.JoinHostPort(ip.String(), strconv.Itoa(port)))
+}
+
 // Serve accepts connections on ln until Close. It may be called once per listener, from
 // separate goroutines. It returns http.ErrServerClosed after Close.
 func (s *Server) Serve(ln net.Listener) error {
 	if a, ok := ln.Addr().(*net.TCPAddr); ok {
 		s.mu.Lock()
 		s.selfPorts[strconv.Itoa(a.Port)] = true
+		if !a.IP.IsLoopback() {
+			s.selfIPs[a.IP.String()] = true
+		}
 		s.mu.Unlock()
 	}
 	return s.http.Serve(&guardListener{Listener: ln, s: s})
@@ -268,6 +308,15 @@ func (s *Server) Close() error {
 
 // ServeHTTP handles one proxy request.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	peer, access := s.peer(r)
+	own := !r.URL.IsAbs() && r.Method != http.MethodConnect || s.isSelf(r.URL.Host, "80")
+	if own && s.serveOwn(w, r, peer, access) {
+		return
+	}
+	if access != Allowed {
+		http.Error(w, "this device may not use wraith yet: scan the QR code in wraith's window", http.StatusForbidden)
+		return
+	}
 	r = r.WithContext(context.WithValue(r.Context(), verdictKey{}, s.verdictFor(r.Context())))
 	if r.Method == http.MethodConnect {
 		s.serveConnect(w, r)
@@ -342,18 +391,15 @@ func (s *Server) isSelf(hostport, defaultPort string) bool {
 	if err != nil {
 		host, port = hostport, defaultPort
 	}
+	h := strings.TrimSuffix(strings.ToLower(host), ".")
+	ip := net.ParseIP(strings.Trim(h, "[]"))
 	s.mu.Lock()
-	ours := s.selfPorts[port]
+	ours := s.selfPorts[port] && (ip == nil || ip.IsLoopback() || ip.IsUnspecified() || s.selfIPs[ip.String()])
 	s.mu.Unlock()
 	if !ours {
 		return false
 	}
-	h := strings.TrimSuffix(strings.ToLower(host), ".")
-	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
-		return true
-	}
-	ip := net.ParseIP(strings.Trim(h, "[]"))
-	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
+	return ip != nil || h == "localhost" || strings.HasSuffix(h, ".localhost")
 }
 
 func (s *Server) trackUpstream(c net.Conn, add bool) {
@@ -394,8 +440,8 @@ func closeWrite(c net.Conn) {
 	_ = c.Close()
 }
 
-// guardListener drops non-loopback peers (S2.1) and connections over MaxConns (S5.1)
-// before the HTTP server reads a byte from them.
+// guardListener drops non-loopback peers the user has not allowed (S2.1, S2.6) and
+// connections over MaxConns (S5.1) before the HTTP server reads a byte from them.
 type guardListener struct {
 	net.Listener
 	s *Server
@@ -407,8 +453,7 @@ func (l *guardListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !isLoopback(c.RemoteAddr()) {
-			l.s.opts.Logf("refused connection from non-loopback peer %s", c.RemoteAddr())
+		if !FromThisMac(c.RemoteAddr(), c.LocalAddr()) && l.s.access(c.RemoteAddr()) == Refused {
 			_ = c.Close()
 			continue
 		}
@@ -425,6 +470,40 @@ func (l *guardListener) Accept() (net.Conn, error) {
 func isLoopback(a net.Addr) bool {
 	ta, ok := a.(*net.TCPAddr)
 	return ok && ta.IP.IsLoopback()
+}
+
+// FromThisMac reports whether a connection came from this Mac: over loopback, or from
+// the Mac's own network address to itself (a browser on the Mac opening the device
+// page). Such a peer is a local process, not a device.
+func FromThisMac(remote, local net.Addr) bool {
+	r, ok := remote.(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	l, ok := local.(*net.TCPAddr)
+	return r.IP.IsLoopback() || ok && r.IP.Equal(l.IP)
+}
+
+// access asks Admit about a peer that is not on this Mac; without Admit it is refused
+// and logged (S2.1). Admit reports its own refusals, once per peer.
+func (s *Server) access(a net.Addr) Access {
+	ta, ok := a.(*net.TCPAddr)
+	if s.opts.Admit == nil || !ok {
+		s.opts.Logf("refused connection from non-loopback peer %s", a)
+		return Refused
+	}
+	return s.opts.Admit(ta.IP)
+}
+
+// peer is the device behind a request, and how far it gets; a request from this Mac is
+// Allowed with a nil peer.
+func (s *Server) peer(r *http.Request) (net.IP, Access) {
+	ci, ok := r.Context().Value(connKey{}).(*connInfo)
+	if !ok || FromThisMac(ci.client, ci.local) {
+		return nil, Allowed
+	}
+	ip := ci.client.(*net.TCPAddr).IP
+	return ip, s.access(ci.client)
 }
 
 func (s *Server) admit(c net.Conn) (*clientConn, bool) {

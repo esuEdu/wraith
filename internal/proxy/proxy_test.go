@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -432,5 +433,127 @@ func TestDialTimeoutAppliesToPlainHTTPAndTunnels(t *testing.T) {
 	}
 	if d := time.Since(start); d > 3*time.Second {
 		t.Fatalf("took %s; the dial timeout was not applied", d)
+	}
+}
+
+func TestS2_6_AdmitLetsAllowedNetworkPeersIn(t *testing.T) {
+	allowed := net.IPv4(192, 168, 1, 20)
+	s := New(Options{Admit: func(ip net.IP) Access {
+		if ip.Equal(allowed) {
+			return Allowed
+		}
+		return Refused
+	}})
+	denied, deniedClient := net.Pipe()
+	ok, okClient := net.Pipe()
+	defer deniedClient.Close()
+	defer okClient.Close()
+	fl := &fakeListener{conns: make(chan net.Conn, 2), done: make(chan struct{})}
+	fl.conns <- addrConn{denied, &net.TCPAddr{IP: net.IPv4(192, 168, 1, 21), Port: 50000}}
+	fl.conns <- addrConn{ok, &net.TCPAddr{IP: allowed, Port: 50001}}
+	c, err := (&guardListener{Listener: fl, s: s}).Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RemoteAddr().String() != "192.168.1.20:50001" {
+		t.Fatalf("accepted %s, want the allowed device", c.RemoteAddr())
+	}
+	_ = deniedClient.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := deniedClient.Read(make([]byte, 1)); !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("a device not allowed: read = %v, want closed", err)
+	}
+}
+
+func TestS2_6_ListensOnOnePrivateAddressOnly(t *testing.T) {
+	for _, ip := range []net.IP{net.IPv4zero, net.IPv6unspecified, net.IPv4(127, 0, 0, 1), net.IPv4(8, 8, 8, 8)} {
+		if ln, err := ListenDevice(ip, 0); err == nil {
+			_ = ln.Close()
+			t.Errorf("ListenDevice(%s) listened", ip)
+		}
+	}
+}
+
+func TestS2_6_ServesTheCAForDevices(t *testing.T) {
+	pem := []byte("-----BEGIN CERTIFICATE-----\nwraith\n-----END CERTIFICATE-----\n")
+	_, addr := startProxy(t, Options{CACert: pem})
+	get := func(c *http.Client, u string) (*http.Response, string) {
+		t.Helper()
+		resp, err := c.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+	direct := &http.Client{Timeout: 5 * time.Second}
+	for _, c := range []*http.Client{direct, proxyClient(addr, nil)} { // before and after the proxy is set
+		resp, body := get(c, "http://"+addr+"/ca")
+		if resp.StatusCode != 200 || body != string(pem) || resp.Header.Get("Content-Type") != "application/x-x509-ca-cert" {
+			t.Fatalf("/ca: %d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+		}
+		if resp, body := get(c, "http://"+addr+"/"); resp.StatusCode != 200 || !strings.Contains(body, `href="/ca"`) {
+			t.Fatalf("setup page: %d %q", resp.StatusCode, body)
+		}
+	}
+	_, addr = startProxy(t, Options{})
+	if resp, _ := get(direct, "http://"+addr+"/ca"); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("/ca without a CA: %d", resp.StatusCode)
+	}
+}
+
+func TestS2_6_TheMacsOwnAddressIsNotADevice(t *testing.T) {
+	own := &net.TCPAddr{IP: net.IPv4(192, 168, 1, 5), Port: 9090}
+	if !FromThisMac(&net.TCPAddr{IP: net.IPv4(192, 168, 1, 5), Port: 50000}, own) ||
+		!FromThisMac(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 50000}, own) {
+		t.Fatal("a connection from this Mac counted as a device")
+	}
+	if FromThisMac(&net.TCPAddr{IP: net.IPv4(192, 168, 1, 6), Port: 50000}, own) {
+		t.Fatal("a device counted as this Mac")
+	}
+}
+
+func TestS2_6_ADeviceWithoutTheKeyGetsOnlyTheSetupPage(t *testing.T) {
+	var unlocked atomic.Bool
+	s := New(Options{
+		CACert: []byte("PEM"),
+		Admit: func(net.IP) Access {
+			if unlocked.Load() {
+				return Allowed
+			}
+			return SetupOnly
+		},
+		Unlock: func(_ net.IP, key, _ string) bool {
+			if key == "k3y" {
+				unlocked.Store(true)
+			}
+			return key == "k3y"
+		},
+	})
+	phone := &connInfo{client: &net.TCPAddr{IP: net.IPv4(192, 168, 1, 20), Port: 50000}, local: &net.TCPAddr{IP: net.IPv4(192, 168, 1, 5), Port: 9090}}
+	do := func(method, target string) (int, string) {
+		r := httptest.NewRequest(method, target, nil)
+		r = r.WithContext(context.WithValue(r.Context(), connKey{}, phone))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, _ := do("GET", "http://example.com/"); code != http.StatusForbidden {
+		t.Fatalf("proxied request before the key: %d", code)
+	}
+	if code, _ := do("CONNECT", "example.com:443"); code != http.StatusForbidden {
+		t.Fatalf("CONNECT before the key: %d", code)
+	}
+	if code, _ := do("GET", "/ca"); code != http.StatusForbidden {
+		t.Fatalf("/ca before the key: %d", code)
+	}
+	if code, body := do("GET", "/?key=nope"); code != 200 || !strings.Contains(body, "scan the QR code") || unlocked.Load() {
+		t.Fatalf("setup page with a wrong key: %d %q", code, body)
+	}
+	if code, body := do("GET", "/?key=k3y"); code != 200 || !strings.Contains(body, `href="/ca"`) || !strings.Contains(body, "192.168.1.5") && !strings.Contains(body, "example.com") {
+		t.Fatalf("setup page with the key: %d %q", code, body)
+	}
+	if code, body := do("GET", "/ca"); code != 200 || body != "PEM" {
+		t.Fatalf("/ca after the key: %d %q", code, body)
 	}
 }
