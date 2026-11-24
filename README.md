@@ -2,55 +2,42 @@
 
 A terminal proxy for macOS that does two things:
 
-- **Inspect** HTTP/HTTPS traffic from a source you choose (the iOS Simulator, one Mac app, one process, or everything). Everything else passes through untouched.
-- **Route** chosen domains around your VPN, through the physical network interface.
+- **Inspect** HTTP and HTTPS from a source you choose: the iOS Simulator, one Mac app, one process, or everything. Everything else passes through untouched: never decrypted, stored or shown.
+- **Route** chosen hosts around your VPN, out through Wi-Fi or Ethernet. If that fails, the connection fails; it is never sent through the VPN instead.
 
 **Website and docs: https://esuedu.github.io/wraith/**
 
-> Status: feature-complete for v1 (milestones M0–M5 done); the v1.0.0 Homebrew release (M6) is in progress. See [docs/SPEC.md](docs/SPEC.md).
-
-## M0 spikes
-
-Two throwaway programs that test the risky parts of the design on a real Mac.
-
-### 1. Who opened this connection?
+## Install
 
 ```sh
-make spike-source            # proxy on 127.0.0.1:9090
+brew install esuEdu/tap/wraith
 ```
 
-In another terminal:
+macOS 13 or later, Apple Silicon or Intel. Homebrew builds wraith from source on your Mac. To build it yourself: `make build && ./wraith version`.
+
+## Use
 
 ```sh
-curl -x http://127.0.0.1:9090 https://example.com
+xcrun simctl boot "iPhone 17" && open -a Simulator   # any simulator
+wraith start                                          # sets the system proxy, opens the live view
 ```
 
-The spike should print `[mac pid=… curl]`. Then point the Mac's proxy at `127.0.0.1:9090`
-(System Settings > Network > Wi-Fi > Details > Proxies, HTTP and HTTPS), open Safari or
-your app in a booted simulator, and check that its lines say `[SIMULATOR …]`.
-Run with `SPIKE_VERBOSE=1` to see the path and the `launchd_sim` arguments.
-Turn the Mac proxy off again when done.
-
-### 2. Can we get around the VPN?
-
-With the VPN connected:
+wraith puts its CA into each booted simulator, decrypts the simulator's traffic and shows it as it happens. Press `q` (or Ctrl-C) to stop; your proxy settings are restored, even after a crash (`wraith stop` restores them at any time).
 
 ```sh
-make spike-bypass HOST=<a site you need outside the VPN> IFACE=en0
+wraith start --source app:Safari         # one Mac app (decrypted only after `wraith ca trust --mac`)
+wraith bypass add api.partner.example    # this host skips the VPN
+wraith doctor                            # checks the proxy, CA, simulators and bypass
+wraith export --har flows.har            # save flows from the running wraith, secrets redacted
 ```
 
-It connects twice, the normal way and bound to `en0`. The design holds if the bound
-connection's local address is your Wi-Fi/Ethernet address and the TLS line says `ok`.
+Everything else, including the configuration file and every command, is in the [documentation](https://esuedu.github.io/wraith/docs/).
 
-## Build
+## Security
 
-```sh
-make build && ./wraith version
-```
+wraith holds a CA that can impersonate any site to the devices that trust it. It is created on your Mac, its key never leaves `~/.wraith/ca/`, and the Mac itself trusts it only if you ask. Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
 ## Development
-
-The `make` targets match the CI jobs, so a local run predicts CI:
 
 ```sh
 make lint    # gofmt, go vet, golangci-lint, forbidden patterns, rules-check
@@ -58,9 +45,7 @@ make test    # all tests with the race detector
 make build-universal   # arm64 + amd64 binary at dist/wraith
 ```
 
-Every change goes through a pull request; see the GitHub Flow, Security and Test Strategy
-specs linked from [docs/SPEC.md](docs/SPEC.md). Rule IDs (R1.1, S2.3, ...) are listed in
-[docs/rules.txt](docs/rules.txt), and tests are named after them.
+Every change goes through a pull request; see the GitHub Flow, Security and Test Strategy specs linked from [docs/SPEC.md](docs/SPEC.md). Rule IDs (R1.1, S2.3, ...) are listed in [docs/rules.txt](docs/rules.txt), and tests are named after them. Releases are tagged `vX.Y.Z` on `main`; the [release workflow](.github/workflows/release.yml) publishes them and [esuEdu/homebrew-tap](https://github.com/esuEdu/homebrew-tap) picks them up.
 
 ## License
 

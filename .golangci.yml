@@ -8,8 +8,6 @@ linters:
     - errorlint
     - misspell
   exclusions:
-    paths:
-      - spike/ # throwaway M0 code, deleted after M0
     rules:
       - path: _test\.go
         # deferred Close/Fprintf; fixtures that look like credentials; temp-dir file reads;
@@ -19,6 +17,3 @@ linters:
 formatters:
   enable:
     - gofmt
-  exclusions:
-    paths:
-      - spike/

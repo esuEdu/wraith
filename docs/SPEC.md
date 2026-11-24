@@ -24,6 +24,8 @@ Companion specs:
 | Mac CA | Decrypt Mac apps only after `wraith ca trust --mac` |
 | Distribution | Source-build formula in `esuEdu/homebrew-tap` |
 | License | MIT |
+| Release secret (M6) | None. The release workflow only publishes the GitHub release (tarball, checksums.txt, provenance attestation); esuEdu/homebrew-tap updates its own formula from the latest release, checking both, with its own token. Replaces the GitHub App token of S6.4. |
+| Decryption default (M3) | On by default for the capture source; `--no-decrypt` turns it off. Mac apps are decrypted only when the Mac trusts the CA. |
 | Bypass route (M0, #5) | Dial bypassed hosts over IPv6 bound to the physical interface first, then IPv4 bound; refuse if neither works. Bypass DNS: the interface's DHCP resolver, then `2606:4700:4700::1111`, both bound. `doctor` reports v4 and v6 separately. Reason: on the tested VPN, IPv4 sockets bound to en0 get `network is unreachable` while IPv6 is not tunnelled. |
 | Source lookup (M0, #5) | Match an app by its **outermost** `.app` bundle (Chrome's traffic comes from a nested helper bundle). WebKit traffic in a simulator comes from `com.apple.WebKit.Networking`, so per-app matching inside a simulator needs more than the process name. |
 
