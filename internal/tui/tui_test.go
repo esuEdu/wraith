@@ -857,4 +857,13 @@ func TestDiffLinesAndCollapse(t *testing.T) {
 	if ops := diffLines(nil, nil); len(ops) != 0 {
 		t.Fatalf("empty: %v", ops)
 	}
+	// Past maxDiffCells the middle is not matched line by line: A's lines out, B's in.
+	var x, y []string
+	for i := range 3000 {
+		x, y = append(x, fmt.Sprint("a", i)), append(y, fmt.Sprint("b", i))
+	}
+	ops := diffLines(x, y)
+	if len(ops) != 6000 || ops[0].kind != '-' || ops[2999].kind != '-' || ops[3000].kind != '+' {
+		t.Fatalf("big diff: %d ops", len(ops))
+	}
 }

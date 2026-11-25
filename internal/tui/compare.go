@@ -242,47 +242,62 @@ func diffLines(a, b []string) []diffOp {
 	}
 	slices.Reverse(tail)
 	var mid []diffOp
-	n, k := len(a), len(b)
-	// Each side is bounded before multiplying, so n*k and the table's sizes cannot overflow.
-	if n > maxDiffCells || k > maxDiffCells || n*k > maxDiffCells {
+	lcs := lcsTable(a, b)
+	if lcs == nil { // too big to match: A's lines out, B's in
 		for _, l := range a {
 			mid = append(mid, diffOp{'-', l})
 		}
 		for _, l := range b {
 			mid = append(mid, diffOp{'+', l})
 		}
-	} else {
-		// lcs[i][j] is the longest common subsequence of a[i:] and b[j:].
-		lcs := make([][]int32, n+1)
-		for i := range lcs {
-			lcs[i] = make([]int32, k+1)
-		}
-		for i := n - 1; i >= 0; i-- {
-			for j := k - 1; j >= 0; j-- {
-				if a[i] == b[j] {
-					lcs[i][j] = lcs[i+1][j+1] + 1
-				} else {
-					lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
-				}
-			}
-		}
-		i, j := 0, 0
-		for i < n || j < k {
-			switch {
-			case i < n && j < k && a[i] == b[j]:
-				mid = append(mid, diffOp{' ', a[i]})
-				i++
-				j++
-			case i < n && (j == k || lcs[i+1][j] >= lcs[i][j+1]): // A's line out first, as diff does
-				mid = append(mid, diffOp{'-', a[i]})
-				i++
-			default:
-				mid = append(mid, diffOp{'+', b[j]})
-				j++
-			}
+		return append(append(head, mid...), tail...)
+	}
+	n, k := len(a), len(b)
+	i, j := 0, 0
+	for i < n || j < k {
+		switch {
+		case i < n && j < k && a[i] == b[j]:
+			mid = append(mid, diffOp{' ', a[i]})
+			i++
+			j++
+		case i < n && (j == k || lcs[i+1][j] >= lcs[i][j+1]): // A's line out first, as diff does
+			mid = append(mid, diffOp{'-', a[i]})
+			i++
+		default:
+			mid = append(mid, diffOp{'+', b[j]})
+			j++
 		}
 	}
 	return append(append(head, mid...), tail...)
+}
+
+// lcsTable is the longest common subsequence of a[i:] and b[j:] for every i and j, or nil
+// when the table would be bigger than maxDiffCells.
+func lcsTable(a, b []string) [][]int32 {
+	n, k := len(a), len(b)
+	if n >= maxDiffCells {
+		return nil
+	}
+	if k >= maxDiffCells {
+		return nil
+	}
+	if n*k > maxDiffCells {
+		return nil
+	}
+	lcs := make([][]int32, n+1)
+	for i := range lcs {
+		lcs[i] = make([]int32, k+1)
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := k - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else {
+				lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
+			}
+		}
+	}
+	return lcs
 }
 
 // collapse keeps context lines of same lines around each change, and says how many it
