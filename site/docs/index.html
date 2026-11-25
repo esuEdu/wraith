@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>wraith docs</title>
-<meta name="description" content="How to install and use wraith: capture sources, HTTPS decryption and the CA, VPN bypass, the live view, export, configuration and every command.">
+<meta name="description" content="How to install, use and uninstall wraith: capture sources, iPhones on your Wi-Fi, HTTPS decryption and the CA, VPN bypass, the live view, export, configuration and every command.">
 <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/favicon.png" type="image/png" sizes="64x64">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<meta name="theme-color" content="#14101f">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
@@ -16,7 +19,7 @@
 <header class="site-header gutter">
   <div class="container">
     <a class="brand" href="../" aria-label="wraith home">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C9.9 3 5 7.9 5 14v14l3.7-2.6L12.3 28l3.7-2.6 3.7 2.6 3.6-2.6L27 28V14C27 7.9 22.1 3 16 3z" fill="currentColor"/><circle cx="12" cy="14" r="2.2" fill="var(--bg)"/><circle cx="20" cy="14" r="2.2" fill="var(--bg)"/></svg>
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c980f2"/><stop offset="1" stop-color="#ff7edb"/></linearGradient></defs><path d="M16 3C9.9 3 5 7.9 5 14v14l3.7-2.6L12.3 28l3.7-2.6 3.7 2.6 3.6-2.6L27 28V14C27 7.9 22.1 3 16 3z" fill="url(#brand-g)"/><circle cx="12" cy="14" r="2.2" fill="#14101f"/><circle cx="20" cy="14" r="2.2" fill="#14101f"/></svg>
       wraith
     </a>
     <nav aria-label="Main">
@@ -49,13 +52,14 @@
           <li><a href="#security">Security and privacy</a></li>
           <li><a href="#troubleshooting">Troubleshooting</a></li>
           <li><a href="#limits">Limits</a></li>
+          <li><a href="#uninstall">Uninstall</a></li>
         </ol>
       </details>
     </aside>
 
     <article class="doc">
       <header>
-        <h1>Documentation</h1>
+        <h1>wraith <span class="hl">documentation</span></h1>
         <p>Everything wraith does, how to use it, and what it changes on your Mac.</p>
       </header>
 
@@ -82,12 +86,7 @@ wraith version</pre>
 cd wraith
 make build
 ./wraith version</pre>
-        <h3>Uninstall</h3>
-        <p>Take the CA out of simulators and the Mac first, then remove the program and its folder:</p>
-        <pre class="block">wraith ca remove
-wraith ca untrust --mac
-brew uninstall wraith
-rm -rf ~/.wraith</pre>
+        <p>To remove wraith later, see <a href="#uninstall">Uninstall</a>: take its CA out of everything that trusts it first.</p>
       </section>
 
       <section id="quick-start">
@@ -341,7 +340,7 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
         <h2>Troubleshooting</h2>
         <p>Start with <code>wraith doctor</code>; it names what is wrong and how to fix it.</p>
         <h3>Websites stopped loading after wraith exited</h3>
-        <p>The system proxy still points at wraith (for example after a forced quit). Run <code>wraith stop</code>: it restores your settings even when wraith is not running.</p>
+        <p>The system proxy still points at wraith (for example after a forced quit). Run <code>wraith stop</code>: it restores your settings even when wraith is not running. On an iPhone or iPad, set its Wi-Fi proxy back to Off.</p>
         <h3>An app's requests do not appear</h3>
         <ul>
           <li>Is it in the source? The default is <code>simulator</code>; Mac apps need <code>app:&lt;name&gt;</code> or <code>all</code>.</li>
@@ -349,7 +348,7 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
           <li>A web page in the simulator shows as <code>com.apple.WebKit.Networking</code>, not as the app.</li>
         </ul>
         <h3>A host shows as <code>tunnel</code> instead of being decrypted</h3>
-        <p>The line says why: <code>no_decrypt</code>, pinned, idle preconnect, not TLS, or a Mac app the Mac does not trust the CA for. See <a href="#decryption">When a connection is not decrypted</a>.</p>
+        <p>The row says why after its address: <code>no_decrypt</code>, <code>certificate rejected</code> (the app pins, or a device does not trust the CA yet; tried again after 30 seconds), <code>idle</code>, <code>not TLS</code>, or a Mac app the Mac does not trust the CA for. See <a href="#decryption">When a connection is not decrypted</a>.</p>
         <h3>The simulator does not trust the CA</h3>
         <p>Run <code>wraith ca install</code> with the simulator booted, then restart the app. <code>wraith doctor</code> lists each booted simulator and whether it trusts the CA.</p>
         <h3>A bypassed host fails</h3>
@@ -361,12 +360,40 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
       <section id="limits">
         <h2>Limits</h2>
         <ul>
-          <li>macOS only. Physical iPhones and Android devices are not supported.</li>
+          <li>macOS only. iPhones and iPads are captured only on the same Wi-Fi as the Mac, with <code>--device</code>; Android devices are not supported.</li>
           <li>Apps that ignore the system proxy are neither captured nor bypassed.</li>
           <li>wraith shows traffic; it does not edit it (no breakpoints, rewrites or map-local).</li>
           <li>HTTP/3 (QUIC) is not proxied; clients fall back to HTTP/2 or HTTP/1.1 through the proxy.</li>
           <li>Bypass goes out on the physical interface only; SSH or WireGuard routes are not supported.</li>
         </ul>
+      </section>
+
+      <section id="uninstall">
+        <h2>Uninstall</h2>
+        <p>Remove wraith in this order: everything that trusts its CA first, then the program, then its folder. The folder holds the CA key, so delete it last; after that, the steps that need wraith no longer work.</p>
+        <ol class="howto">
+          <li><strong>Stop it and restore your proxy settings.</strong> Safe to run even if wraith is not running: it also puts back settings a crash left behind.
+            <pre class="block">wraith stop</pre></li>
+          <li><strong>Take the CA out of every simulator</strong>, booted or not. Other certificates stay.
+            <pre class="block">wraith ca remove</pre></li>
+          <li><strong>If you made the Mac trust it</strong> (<code>wraith ca trust --mac</code>), take it out of the Mac keychain. macOS asks for your password.
+            <pre class="block">wraith ca untrust --mac</pre></li>
+          <li><strong>On each iPhone or iPad you set up</strong> with <code>--device</code>:
+            <ul>
+              <li>Settings › Wi-Fi › ⓘ next to the network › Configure Proxy › <strong>Off</strong>.</li>
+              <li>Settings › General › VPN &amp; Device Management › <strong>wraith CA</strong> › Remove Profile.</li>
+            </ul></li>
+          <li><strong>Remove the program.</strong> With Homebrew, also remove the tap if you have nothing else from it:
+            <pre class="block">brew uninstall wraith
+brew untap esuEdu/tap</pre>
+            Built from source: delete the <code>wraith</code> binary you built.</li>
+          <li><strong>Delete its folder</strong>: the CA and its key, <code>config.yaml</code>, remembered devices and the saved proxy settings. This cannot be undone.
+            <pre class="block">rm -rf ~/.wraith</pre>
+            If you set <code>WRAITH_HOME</code>, delete that folder instead.</li>
+        </ol>
+        <div class="callout">
+          <p><strong>Check it is gone.</strong> System Settings › Network › your network › Details › Proxies shows no proxy left on; <code>which wraith</code> prints nothing.</p>
+        </div>
       </section>
     </article>
   </div>
@@ -374,8 +401,8 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
 
 <footer class="site-footer gutter">
   <div class="container">
-    <span>wraith · MIT license</span>
-    <span><a href="../">Home</a> · <a href="https://github.com/esuEdu/wraith">GitHub</a> · <a href="https://github.com/esuEdu/wraith/issues/new/choose">Report a bug</a></span>
+    <span class="sign"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C9.9 3 5 7.9 5 14v14l3.7-2.6L12.3 28l3.7-2.6 3.7 2.6 3.6-2.6L27 28V14C27 7.9 22.1 3 16 3z" fill="currentColor"/><circle cx="12" cy="14" r="2.2" fill="var(--bg)"/><circle cx="20" cy="14" r="2.2" fill="var(--bg)"/></svg> wraith · MIT license</span>
+    <span><a href="../">Home</a> · <a href="#uninstall">Uninstall</a> · <a href="https://github.com/esuEdu/wraith">GitHub</a> · <a href="https://github.com/esuEdu/wraith/issues/new/choose">Report a bug</a></span>
   </div>
 </footer>
 
