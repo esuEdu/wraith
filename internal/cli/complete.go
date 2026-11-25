@@ -182,11 +182,7 @@ func (a *app) rememberedIPs() []string {
 }
 
 func (a *app) completeDevices(context.Context) []cobra.Completion {
-	list := []cobra.Completion{cobra.CompletionWithDesc("all", "every remembered device")}
-	for _, ip := range a.rememberedIPs() {
-		list = append(list, ip)
-	}
-	return list
+	return append([]cobra.Completion{cobra.CompletionWithDesc("all", "every remembered device")}, a.rememberedIPs()...)
 }
 
 // noArgs is for commands that take no arguments, so tab offers no file names.
