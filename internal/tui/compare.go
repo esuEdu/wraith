@@ -243,7 +243,8 @@ func diffLines(a, b []string) []diffOp {
 	slices.Reverse(tail)
 	var mid []diffOp
 	n, k := len(a), len(b)
-	if n*k > maxDiffCells {
+	// Each side is bounded before multiplying, so n*k and the table's sizes cannot overflow.
+	if n > maxDiffCells || k > maxDiffCells || n*k > maxDiffCells {
 		for _, l := range a {
 			mid = append(mid, diffOp{'-', l})
 		}
