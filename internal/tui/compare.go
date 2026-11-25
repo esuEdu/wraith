@@ -242,8 +242,8 @@ func diffLines(a, b []string) []diffOp {
 	}
 	slices.Reverse(tail)
 	var mid []diffOp
-	lcs := lcsTable(a, b)
-	if lcs == nil { // too big to match: A's lines out, B's in
+	table := lcsTable(a, b)
+	if table == nil && len(a) > 0 && len(b) > 0 { // too big to match: A's lines out, B's in
 		for _, l := range a {
 			mid = append(mid, diffOp{'-', l})
 		}
@@ -260,7 +260,7 @@ func diffLines(a, b []string) []diffOp {
 			mid = append(mid, diffOp{' ', a[i]})
 			i++
 			j++
-		case i < n && (j == k || lcs[i+1][j] >= lcs[i][j+1]): // A's line out first, as diff does
+		case i < n && (j == k || table.at(i+1, j) >= table.at(i, j+1)): // A's line out first, as diff does
 			mid = append(mid, diffOp{'-', a[i]})
 			i++
 		default:
@@ -271,33 +271,37 @@ func diffLines(a, b []string) []diffOp {
 	return append(append(head, mid...), tail...)
 }
 
-// lcsTable is the longest common subsequence of a[i:] and b[j:] for every i and j, or nil
-// when the table would be bigger than maxDiffCells.
-func lcsTable(a, b []string) [][]int32 {
+// lcs holds the longest common subsequence of a[i:] and b[j:] for every i and j. It is
+// exactly len(a) by len(b); past either end the answer is 0.
+type lcs [][]int32
+
+func (l lcs) at(i, j int) int32 {
+	if i >= len(l) || j >= len(l[i]) {
+		return 0
+	}
+	return l[i][j]
+}
+
+// lcsTable fills the table, or returns nil when it would be bigger than maxDiffCells.
+func lcsTable(a, b []string) lcs {
 	n, k := len(a), len(b)
-	if n >= maxDiffCells {
+	if n > maxDiffCells || k > maxDiffCells || n*k > maxDiffCells {
 		return nil
 	}
-	if k >= maxDiffCells {
-		return nil
-	}
-	if n*k > maxDiffCells {
-		return nil
-	}
-	lcs := make([][]int32, n+1)
-	for i := range lcs {
-		lcs[i] = make([]int32, k+1)
+	t := make(lcs, n)
+	for i := range t {
+		t[i] = make([]int32, k)
 	}
 	for i := n - 1; i >= 0; i-- {
 		for j := k - 1; j >= 0; j-- {
 			if a[i] == b[j] {
-				lcs[i][j] = lcs[i+1][j+1] + 1
+				t[i][j] = t.at(i+1, j+1) + 1
 			} else {
-				lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
+				t[i][j] = max(t.at(i+1, j), t.at(i, j+1))
 			}
 		}
 	}
-	return lcs
+	return t
 }
 
 // collapse keeps context lines of same lines around each change, and says how many it
