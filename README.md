@@ -15,6 +15,8 @@ brew install esuEdu/tap/wraith
 
 macOS 13 or later, Apple Silicon or Intel. Homebrew builds wraith from source on your Mac. To build it yourself: `make build && ./wraith version`.
 
+To remove it, take its CA out of everything that trusts it first, then the program and `~/.wraith`: see [Uninstall](https://esuedu.github.io/wraith/docs/#uninstall).
+
 ## Use
 
 ```sh
