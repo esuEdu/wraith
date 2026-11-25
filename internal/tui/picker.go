@@ -57,8 +57,14 @@ func (m *Model) pickGroups() []pickGroup {
 	return g
 }
 
-// groupOf is the group a source belongs to, "" for all and for sources typed by hand.
+// groupOf is the group a source belongs to, "" for all and for sources typed by hand. A
+// source listed under another (an app in a simulator) belongs to its parent's group.
 func (m *Model) groupOf(source string) string {
+	for _, c := range m.pick.choices {
+		if c.Parent != "" && strings.EqualFold(c.Source, source) {
+			return m.groupOf(c.Parent)
+		}
+	}
 	for _, g := range m.pickGroups() {
 		if strings.EqualFold(source, g.all.Source) && g.all.Source != "" || strings.HasPrefix(strings.ToLower(source), g.prefix) {
 			return g.key
@@ -103,9 +109,12 @@ func (m *Model) pickList() []pickRow {
 		}
 		n := 0
 		for _, c := range m.pick.choices {
-			if strings.HasPrefix(c.Source, g.prefix) {
+			switch {
+			case c.Parent == "" && strings.HasPrefix(c.Source, g.prefix):
 				kids = append(kids, c)
-				n++
+				n++ // the count is of simulators, apps or devices, not what runs in them
+			case c.Parent != "" && strings.HasPrefix(c.Parent, g.prefix):
+				kids = append(kids, c)
 			}
 		}
 		count := fmt.Sprintf(g.count, n)
@@ -165,6 +174,9 @@ func (m *Model) pickerLoaded(msg choicesMsg) {
 		m.labels[c.Source] = c.Label
 	}
 	if m.input == "" {
+		if g := m.groupOf(m.act.Source()); g != "" { // now known, e.g. an app in a simulator
+			m.pick.open = map[string]bool{g: true}
+		}
 		m.cursorOnCurrent()
 	}
 }
@@ -295,7 +307,11 @@ func (m *Model) renderPicker() string {
 	m.pick.top = max(min(m.pick.top, len(rows)-n), 0)
 	labelW := 12
 	for _, r := range rows {
-		labelW = max(labelW, lipgloss.Width(r.choice.Label)+2) // room for "▸ " or the indent
+		indent := 2 // room for "▸ " or the indent
+		if r.choice.Parent != "" {
+			indent = 4
+		}
+		labelW = max(labelW, lipgloss.Width(r.choice.Label)+indent)
 	}
 	labelW = min(labelW, 30)
 	current := m.act.Source()
@@ -323,6 +339,8 @@ func (m *Model) renderPicker() string {
 				fold = "▾ "
 			}
 			label = fold + label
+		case r.choice.Parent != "" && !flat:
+			label = "    " + label
 		case r.group != "" && !flat:
 			label = "  " + label
 		}

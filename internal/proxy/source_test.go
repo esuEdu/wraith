@@ -170,3 +170,41 @@ func TestPassedThroughTunnelsSayWhy(t *testing.T) {
 	_, _ = io.WriteString(c, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n")
 	e.waitFlow(t, "for the idle tunnel", func(f store.Flow) bool { return strings.Contains(f.Err, "the client sent nothing for 200ms") })
 }
+
+func TestDeviceFlowsNameTheAppFromTheUserAgent(t *testing.T) {
+	ts := upstreamServer(t, false, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok") })
+	plain := httptestPlain(t)
+	e := startMITM(t, poolOf(ts.Certificate()), func(o *Options) {
+		o.Classify = func(context.Context, net.Addr, net.Addr) Verdict {
+			return Verdict{InSource: true, Decrypt: true, Label: "device 192.168.0.23", ByUserAgent: true}
+		}
+		o.AppFromUserAgent = func(ua string) string { name, _, _ := strings.Cut(ua, "/"); return name }
+	})
+	get := func(c *http.Client, u, ua string) {
+		req, _ := http.NewRequest("GET", u, nil)
+		req.Header.Set("User-Agent", ua)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+	}
+	c := e.client(poolOf(e.ca.Certificate()), false)
+	get(c, ts.URL+"/a", "Shop/2.3 CFNetwork/3826")    // decrypted HTTPS
+	get(c, ts.URL+"/b", "Bank/7 CFNetwork/3826")      // the same connection, another app
+	get(e.client(nil, false), plain+"/c", "Shop/2.3") // plain HTTP
+	var labels []string
+	deadline := time.Now().Add(3 * time.Second)
+	for len(labels) < 3 && time.Now().Before(deadline) {
+		labels = labels[:0]
+		for _, f := range e.store.Flows() {
+			labels = append(labels, f.Source+" "+f.URL[strings.LastIndex(f.URL, "/"):])
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	want := "device 192.168.0.23 · Shop /a|device 192.168.0.23 · Bank /b|device 192.168.0.23 · Shop /c"
+	if got := strings.Join(labels, "|"); got != want {
+		t.Fatalf("labels %q\nwant   %q", got, want)
+	}
+}

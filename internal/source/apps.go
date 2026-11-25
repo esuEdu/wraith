@@ -18,6 +18,32 @@ type App struct {
 // in an Applications folder count, so background agents and simulator apps are left out.
 // Like Lookup it reads the kernel's process list and runs no tool.
 func RunningApps() ([]App, error) {
+	paths, err := processPaths()
+	if err != nil {
+		return nil, err
+	}
+	return appsFrom(paths), nil
+}
+
+// SimApp is an app running inside a simulator: one installed in it, not the simulator's
+// own system apps.
+type SimApp struct {
+	UDID string // the simulator it runs in, upper case
+	Name string // the bundle's name without .app, as app:<name> matches it
+}
+
+// RunningSimApps lists the apps running inside booted simulators, per simulator, sorted.
+// Like RunningApps it reads the kernel's process list and runs no tool.
+func RunningSimApps() ([]SimApp, error) {
+	paths, err := processPaths()
+	if err != nil {
+		return nil, err
+	}
+	return simAppsFrom(paths), nil
+}
+
+// processPaths is the executable path of every process wraith may read.
+func processPaths() ([]string, error) {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return nil, err
@@ -28,7 +54,34 @@ func RunningApps() ([]App, error) {
 			paths = append(paths, path)
 		}
 	}
-	return appsFrom(paths), nil
+	return paths, nil
+}
+
+// simAppsFrom picks the apps installed in simulators out of executable paths
+// (.../CoreSimulator/Devices/<UDID>/data/Containers/Bundle/Application/<id>/Shop.app/Shop),
+// one per simulator and name.
+func simAppsFrom(paths []string) []SimApp {
+	seen := map[string]bool{}
+	var apps []SimApp
+	for _, p := range paths {
+		if !strings.Contains(p, "/data/Containers/Bundle/Application/") {
+			continue
+		}
+		m := udidInPath.FindStringSubmatch(p)
+		app := outermostApp(p)
+		if m == nil || app == "" {
+			continue
+		}
+		a := SimApp{UDID: strings.ToUpper(m[1]), Name: strings.TrimSuffix(filepath.Base(app), ".app")}
+		if key := a.UDID + "/" + strings.ToLower(a.Name); !seen[key] {
+			seen[key] = true
+			apps = append(apps, a)
+		}
+	}
+	slices.SortFunc(apps, func(a, b SimApp) int {
+		return strings.Compare(a.UDID+"/"+strings.ToLower(a.Name), b.UDID+"/"+strings.ToLower(b.Name))
+	})
+	return apps
 }
 
 // appsFrom picks the Mac apps out of executable paths, one per name, sorted by name.

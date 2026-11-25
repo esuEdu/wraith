@@ -58,7 +58,8 @@ func (s *Server) tunnel(ctx context.Context, start time.Time, client net.Conn, b
 		return
 	}
 	_ = up.Close() // the forwarding transport dials and verifies the upstream itself
-	s.serveDecrypted(&peekedConn{Conn: client, r: br}, name, target, v)
+	// The requests inside are named each by its own User-Agent, not the CONNECT's.
+	s.serveDecrypted(&peekedConn{Conn: client, r: br}, name, target, s.verdictFor(ctx))
 }
 
 // peekHello reads, without consuming, the client's first TLS record. When the client
@@ -119,7 +120,7 @@ func (s *Server) serveDecrypted(c net.Conn, name, target string, v Verdict) {
 			http.Error(w, "CONNECT inside a decrypted tunnel is not supported", http.StatusBadRequest)
 			return
 		}
-		ctx := context.WithValue(context.WithValue(r.Context(), targetKey{}, target), verdictKey{}, v)
+		ctx := context.WithValue(context.WithValue(r.Context(), targetKey{}, target), verdictKey{}, s.withApp(v, r.UserAgent()))
 		r = r.WithContext(ctx)
 		host, _, _ := net.SplitHostPort(target)
 		s.tlsRP.ServeHTTP(w, s.beginFlow(r, "https://"+r.Host+r.URL.RequestURI(), host))

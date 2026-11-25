@@ -276,3 +276,22 @@ func TestDeviceSources(t *testing.T) {
 		t.Errorf("label %q", phone.Label())
 	}
 }
+
+func TestAppFromUserAgent(t *testing.T) {
+	for ua, want := range map[string]string{
+		"Shop/2.3.1 CFNetwork/3826.400.110 Darwin/26.0.0":                  "Shop",
+		"My%20Bank/7 CFNetwork/3826 Darwin/26.0":                           "My Bank",
+		"Shop/2.3 (com.example.shop; build:41; iOS 26.1.0) Alamofire/5.10": "Shop",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1": "Safari",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148":                           "web view",
+		"com.apple.trustd/2.0":       "com.apple.trustd",
+		"CFNetwork/3826 Darwin/26.0": "",
+		"":                           "",
+		"Évora<script>/1":            "Évorascript",
+		"AVeryLongApplicationNameThatGoesOnAndOn/1": "AVeryLongApplicationNameThatGoes",
+	} {
+		if got := AppFromUserAgent(ua); got != want {
+			t.Errorf("%q: %q, want %q", ua, got, want)
+		}
+	}
+}
