@@ -17,6 +17,7 @@ import (
 	"github.com/esuEdu/wraith/internal/config"
 	"github.com/esuEdu/wraith/internal/export"
 	"github.com/esuEdu/wraith/internal/home"
+	"github.com/esuEdu/wraith/internal/proxy"
 	"github.com/esuEdu/wraith/internal/route"
 	"github.com/esuEdu/wraith/internal/sim"
 	"github.com/esuEdu/wraith/internal/source"
@@ -41,6 +42,7 @@ type liveState struct {
 	macTrusted  bool
 	runningApps func() ([]source.App, error)
 	devs        *devices // nil without --device
+	srv         *proxy.Server
 
 	src       atomic.Pointer[source.Source]
 	noDecrypt atomic.Pointer[[]string]
@@ -127,7 +129,6 @@ func (l liveActions) Choices() ([]tui.Choice, error) {
 		}
 	}
 	if l.devs != nil {
-		out = append(out, tui.Choice{Source: "device", Label: "device", Note: "every iPhone or iPad set up with the QR code (d)"})
 		for _, ip := range l.devs.Allowed() {
 			out = append(out, tui.Choice{Source: "device:" + ip, Label: ip, Note: "device on this Wi-Fi"})
 		}
@@ -196,6 +197,15 @@ func (l liveActions) ExportHAR() (string, error) {
 }
 
 func (l liveActions) Clear() { l.flows.Clear() }
+
+// Replay sends a captured request again through the proxy's route; the result is a new
+// flow.
+func (l liveActions) Replay(f store.Flow) (store.Flow, error) {
+	if l.srv == nil {
+		return store.Flow{}, errors.New("the proxy is not running")
+	}
+	return l.srv.Replay(context.Background(), f)
+}
 
 // isTerminal reports whether f is a terminal.
 func isTerminal(f *os.File) bool {

@@ -31,6 +31,15 @@ type Actions interface {
 	Redactor() export.Redactor
 	ExportHAR() (path string, err error)
 	Clear()
+	// Replay sends a captured request again through the proxy's route and returns the
+	// new flow. It may be slow (the upstream answers); the view calls it off the UI loop.
+	Replay(f store.Flow) (store.Flow, error)
+}
+
+// replayMsg delivers what Replay did.
+type replayMsg struct {
+	orig, f store.Flow
+	err     error
 }
 
 // Choice is one entry in the source picker.
@@ -79,13 +88,19 @@ type Model struct {
 	offset   int   // first row of shown on screen
 	follow   bool  // keep the newest flow selected
 	filter   string
-	input    string // text being typed for the filter or the source
+	terms    []term            // the filter, parsed
+	bodies   map[uint64]string // decoded bodies in lower case, for body: terms
+	input    string            // text being typed for the filter or the source
 	mode     mode
 	detailAt int // first line of the detail view on screen
 	tab      int // tabResponse or tabRequest
 	detail   struct {
 		at, width, tab int // the flow (index into flows), width and tab the lines were built for
 		lines          []string
+	}
+	confirm struct { // r on a request that may change data asks once more
+		id uint64
+		at time.Time
 	}
 	pick   picker
 	labels map[string]string // source → the name the picker showed for it
@@ -101,7 +116,7 @@ type Model struct {
 
 // New returns a Model showing flows (oldest first) for a proxy listening on listen.
 func New(act Actions, listen string, flows []store.Flow) *Model {
-	m := &Model{act: act, listen: listen, flows: flows, follow: true, width: 100, height: 30, labels: map[string]string{}}
+	m := &Model{act: act, listen: listen, flows: flows, follow: true, width: 100, height: 30, labels: map[string]string{}, bodies: map[uint64]string{}}
 	m.t, _ = themeNamed(DefaultTheme)
 	m.refilter()
 	return m
@@ -138,8 +153,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.say(string(msg))
 	case choicesMsg:
 		m.pickerLoaded(msg)
+	case replayMsg:
+		m.replayed(msg)
 	case tea.KeyPressMsg:
 		return m.key(msg)
+	case tea.MouseMsg:
+		if m.mode == modeSource {
+			return m, m.pickerMouse(msg)
+		}
 	}
 	return m, nil
 }
@@ -177,6 +198,8 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.detailAt = len(m.detail.lines) // clamped when drawn
 		case "c":
 			return m, m.copyCurl()
+		case "r":
+			return m, m.replay()
 		case "b":
 			return m, m.copyBody()
 		case "h":
@@ -216,7 +239,7 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.showDev {
 			m.showDev = false
 		} else if m.filter != "" {
-			m.filter = ""
+			m.filter, m.terms = "", nil
 			m.refilter()
 		}
 	case "s":
@@ -227,6 +250,8 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.hostAction("no-decrypt", m.act.NoDecrypt)
 	case "c":
 		return m, m.copyCurl()
+	case "r":
+		return m, m.replay()
 	case "e":
 		if p, err := m.act.ExportHAR(); err != nil {
 			m.say("export failed: " + err.Error())
@@ -236,6 +261,7 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "x":
 		m.act.Clear()
 		m.flows, m.shown, m.cursor, m.offset, m.follow = nil, nil, 0, 0, true
+		m.bodies = map[uint64]string{}
 		m.detail.lines = nil
 		m.refilter()
 		m.say("cleared")
@@ -250,6 +276,7 @@ func (m *Model) typing(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 	case "enter":
 		m.filter = strings.TrimSpace(m.input)
+		m.terms = parseFilter(m.filter)
 		m.refilter()
 		m.mode = modeList
 	case "ctrl+c":
@@ -296,6 +323,61 @@ func (m *Model) sourceName() string {
 	return s
 }
 
+// replay sends the selected request again. A method that may change data on the server
+// (anything but GET, HEAD, OPTIONS) asks for a second r within a few seconds.
+func (m *Model) replay() tea.Cmd {
+	f, ok := m.selected()
+	if !ok {
+		return nil
+	}
+	if f.Kind != store.KindHTTP {
+		m.say("a tunnel was not decrypted: there is no request to send again")
+		return nil
+	}
+	switch f.Method {
+	case "GET", "HEAD", "OPTIONS":
+	default:
+		if m.confirm.id != f.ID || time.Since(m.confirm.at) > 4*time.Second {
+			m.confirm.id, m.confirm.at = f.ID, time.Now()
+			m.say("r again to resend " + f.Method + " " + shortURL(f.URL) + ": it may change data on the server")
+			return nil
+		}
+	}
+	m.confirm.id = 0
+	m.say("resending " + f.Method + " " + shortURL(f.URL) + "…")
+	act := m.act
+	return func() tea.Msg {
+		nf, err := act.Replay(f)
+		return replayMsg{orig: f, f: nf, err: err}
+	}
+}
+
+func (m *Model) replayed(msg replayMsg) {
+	what := msg.orig.Method + " " + shortURL(msg.orig.URL)
+	switch {
+	case msg.f.ID == 0 && msg.err != nil:
+		m.say("could not resend " + what + ": " + msg.err.Error())
+	case msg.err != nil || msg.f.Status == 0 || msg.f.Status >= 500 && msg.f.Err != "":
+		m.say("resent " + what + ": no answer (" + msg.f.Err + "); it is the newest row")
+	default:
+		m.say(fmt.Sprintf("resent %s: %d in %s; it is the newest row", what, msg.f.Status, msg.f.Duration.Round(time.Millisecond)))
+	}
+}
+
+// shortURL is a URL without its scheme and query, for status messages.
+func shortURL(u string) string {
+	if i := strings.Index(u, "://"); i >= 0 {
+		u = u[i+3:]
+	}
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	if len(u) > 60 {
+		u = u[:59] + "…"
+	}
+	return u
+}
+
 func (m *Model) hostAction(what string, do func(string) error) {
 	f, ok := m.selected()
 	if !ok {
@@ -336,7 +418,7 @@ func (m *Model) refilter() {
 	}
 	m.shown = m.shown[:0]
 	for i, f := range m.flows {
-		if matches(f, m.filter) {
+		if m.matches(f) {
 			m.shown = append(m.shown, i)
 		}
 	}
@@ -351,15 +433,6 @@ func (m *Model) refilter() {
 		}
 	}
 	m.cursor = min(m.cursor, max(len(m.shown)-1, 0))
-}
-
-// matches reports whether every word of filter appears in the flow's summary.
-func matches(f store.Flow, filter string) bool {
-	if filter == "" {
-		return true
-	}
-	hay := strings.ToLower(fmt.Sprintf("%s %s %s %d %s %s %s", f.Source, f.Method, f.URL, f.Status, f.Route, f.Kind, f.Err))
-	return containsWords(hay, filter)
 }
 
 // containsWords reports whether every word of query appears in hay (already lower case).

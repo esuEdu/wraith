@@ -450,6 +450,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
+	live.srv = srv
 	printed, stopPrinting := (<-chan struct{})(closedChan()), func() {}
 	if !useTUI {
 		printed, stopPrinting = a.printFlows(flows, so.jsonLog, export.NewRedactor(cfg.Export.RedactHeaders))

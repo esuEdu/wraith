@@ -2,10 +2,14 @@ package cli
 
 import (
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -13,6 +17,7 @@ import (
 	"github.com/esuEdu/wraith/internal/config"
 	"github.com/esuEdu/wraith/internal/sim/simtest"
 	"github.com/esuEdu/wraith/internal/source"
+	"github.com/esuEdu/wraith/internal/store"
 	"github.com/esuEdu/wraith/internal/tui"
 )
 
@@ -157,5 +162,42 @@ func TestConfigThemesAreTheLiveViewsThemes(t *testing.T) {
 		if err := m.SetTheme(name); err != nil {
 			t.Error(err)
 		}
+	}
+}
+
+func TestResendFromTheLiveViewIsRecordedAsAReplay(t *testing.T) {
+	var hits atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, "pong "+r.Header.Get("X-Token"))
+	}))
+	t.Cleanup(ts.Close)
+	e := newEnv(t) // a simulator app, inside the default source
+	var acts tui.Actions
+	d := e.deps()
+	d.OnActions = func(a tui.Actions) { acts = a }
+	done := make(chan int, 1)
+	go func() { done <- Main(t.Context(), []string{"start", "--port", freePort(t), "--no-system-proxy"}, d) }()
+	addr := <-e.ready
+
+	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: addr})}}
+	req, _ := http.NewRequest("GET", ts.URL+"/ping", nil)
+	req.Header.Set("X-Token", "abc")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+
+	orig := store.Flow{Kind: store.KindHTTP, Source: "sim iPhone 17 · Shop", Method: "GET", URL: ts.URL + "/ping", ReqHeader: http.Header{"X-Token": {"abc"}}}
+	f, err := acts.Replay(orig)
+	if err != nil || f.Status != 200 || string(f.RespBody.Data) != "pong abc" || f.Source != "replay · sim iPhone 17 · Shop" || hits.Load() != 2 {
+		t.Fatalf("replay: %+v %v (%d hits)", f, err, hits.Load())
+	}
+	e.sigs <- syscall.SIGTERM
+	<-done
+	if out := e.stdout.String(); !strings.Contains(out, "[replay · sim iPhone 17 · Shop] GET "+ts.URL+"/ping 200") {
+		t.Fatalf("the resent request is not a flow of its own:\n%s", out)
 	}
 }

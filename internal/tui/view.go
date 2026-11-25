@@ -21,6 +21,9 @@ func (m *Model) View() tea.View {
 	v.AltScreen = true
 	v.WindowTitle = "wraith · " + m.sourceName()
 	v.BackgroundColor, v.ForegroundColor = m.t.bg, m.t.fg
+	if m.mode == modeSource { // clicks pick a source; elsewhere the mouse stays the terminal's, to select text
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 
@@ -170,13 +173,14 @@ func (m *Model) footer() string {
 	t := m.t
 	if m.mode == modeFilter {
 		prompt := t.accentBold.Render(" filter › ") + m.input + t.mark.Render("▏")
-		return clip(prompt+"   "+t.hints("enter", "apply", "esc", "cancel"), m.width)
+		help := t.muted.Render("words · body:text · header:text · \"a phrase\"")
+		return clip(prompt+"   "+help+"  "+t.hints("enter", "apply", "esc", "cancel"), m.width)
 	}
 	if s, ok := m.statusLine(); ok {
 		return s
 	}
 	// Most useful first; on a narrow screen the ones before "q quit" go, from the end.
-	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "e", "export",
+	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "r", "resend", "e", "export",
 		"b", "bypass", "n", "no-decrypt", "x", "clear", "↑↓", "move", "q", "quit"}
 	if m.dev.Addr != "" {
 		keys = append(keys[:4], append([]string{"d", "device"}, keys[4:]...)...)
@@ -353,7 +357,7 @@ func (m *Model) renderDetail(f store.Flow) string {
 		other := strings.ToLower(tabNames[1-m.tab])
 		sep := t.dim.Render("  │ ")
 		h = t.hints("tab", other) + sep + t.muted.Render("copy") + t.hints("b", "body", "h", "headers", "u", "url", "c", "curl") +
-			sep + t.hints("↑↓", "scroll", "esc", "back")[1:]
+			sep + t.hints("r", "resend", "esc", "back")[1:]
 	} else {
 		h = t.hints("u", "copy host", "esc", "back")
 	}

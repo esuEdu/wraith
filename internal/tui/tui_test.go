@@ -22,6 +22,12 @@ type fakeActions struct {
 	choices             []Choice
 	bypassed, noDecrypt []string
 	exported, cleared   int
+	replayed            []store.Flow
+}
+
+func (f *fakeActions) Replay(fl store.Flow) (store.Flow, error) {
+	f.replayed = append(f.replayed, fl)
+	return store.Flow{ID: 99, Kind: store.KindHTTP, Method: fl.Method, URL: fl.URL, Status: 201, Duration: 84 * time.Millisecond}, nil
 }
 
 func (f *fakeActions) Source() string             { return f.source }
@@ -173,6 +179,7 @@ func TestR1_5_SourcePickerListsSimulatorsAndApps(t *testing.T) {
 		{Source: "simulator:2F3A0D4E-1B2C-4D5E-8F90-A1B2C3D4E5F6", Label: "iPhone 17 Pro", Note: "iOS 26.1 · CA installed"},
 		{Source: "simulator:9C1BEA91-F023-4C77-857A-A5622219DC8B", Label: "iPad Air", Note: "iOS 26.1 · CA not installed yet"},
 		{Source: "app:Safari", Label: "Safari", Note: "Mac app"},
+		{Source: "app:Slack", Label: "Slack", Note: "Mac app"},
 	}
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	if out := screen(m); !strings.Contains(out, "looking for booted simulators") {
@@ -180,10 +187,14 @@ func TestR1_5_SourcePickerListsSimulatorsAndApps(t *testing.T) {
 	}
 	run(m, cmd)
 	out := screen(m)
-	for _, want := range []string{"Capture which source?", "▸ ● simulator", "every booted simulator (2 now)", "iPhone 17 Pro", "iOS 26.1 · CA installed", "iPad Air", "Safari", "Mac app"} {
+	// The current source is simulator: its group is open, the cursor on it; Mac apps stay folded.
+	for _, want := range []string{"Capture which source?", "▾ Simulators       2 booted", "▸ ●   every simulator", "iPhone 17 Pro", "iOS 26.1 · CA installed", "iPad Air", "▸ Mac apps         2 running"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("picker misses %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Safari") {
+		t.Errorf("the Mac apps group is open:\n%s", out)
 	}
 	press(m, "down", "enter") // the first simulator, by UDID
 	if act.source != "simulator:2F3A0D4E-1B2C-4D5E-8F90-A1B2C3D4E5F6" || m.mode != modeList {
@@ -194,12 +205,12 @@ func TestR1_5_SourcePickerListsSimulatorsAndApps(t *testing.T) {
 	}
 
 	run(m, func() tea.Cmd { _, c := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"}); return c }())
-	typeText(m, "ipad")
-	if out := screen(m); strings.Contains(out, "Safari") || !strings.Contains(out, "▸   iPad Air") {
-		t.Fatalf("typing does not narrow the list:\n%s", out)
+	typeText(m, "safari") // typing searches every group, folded or not
+	if out := screen(m); strings.Contains(out, "iPad") || !strings.Contains(out, "▸   Safari") {
+		t.Fatalf("typing does not search the folded apps:\n%s", out)
 	}
 	press(m, "enter")
-	if act.source != "simulator:9C1BEA91-F023-4C77-857A-A5622219DC8B" {
+	if act.source != "app:Safari" {
 		t.Fatalf("source %q", act.source)
 	}
 
@@ -215,6 +226,57 @@ func TestR1_5_SourcePickerListsSimulatorsAndApps(t *testing.T) {
 	press(m, "s", "esc")
 	if m.mode != modeList || act.source != "pid:4242" {
 		t.Fatal("esc changed the source")
+	}
+}
+
+func TestSourcePickerGroupsOpenAndFold(t *testing.T) {
+	m, act := newModel()
+	act.source = "all"
+	act.choices = []Choice{{Source: "app:Safari", Label: "Safari", Note: "Mac app"}, {Source: "app:Slack", Label: "Slack", Note: "Mac app"}}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	run(m, func() tea.Cmd { _, c := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"}); return c }())
+	if out := screen(m); strings.Contains(out, "Safari") || strings.Contains(out, "every simulator") {
+		t.Fatalf("groups start open:\n%s", out)
+	}
+	if m.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("the picker does not take clicks")
+	}
+	press(m, "down", "down") // Mac apps
+	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	if out := screen(m); !strings.Contains(out, "▾ Mac apps") || !strings.Contains(out, "Slack") {
+		t.Fatalf("→ does not open the group:\n%s", out)
+	}
+	press(m, "down")                             // Safari
+	m.Update(tea.KeyPressMsg{Code: tea.KeyLeft}) // folds its group, back on the heading
+	if out := screen(m); strings.Contains(out, "Safari") || !strings.Contains(out, "▸   ▸ Mac apps") {
+		t.Fatalf("← does not fold the group:\n%s", out)
+	}
+	press(m, "enter") // enter opens it too
+	if !strings.Contains(screen(m), "Slack") {
+		t.Fatal("enter does not open the group")
+	}
+
+	// A click on a heading opens or folds it; a click on a source captures it.
+	line := func(text string) int {
+		for i, l := range strings.Split(screen(m), "\n") {
+			if strings.Contains(l, text) {
+				return i
+			}
+		}
+		t.Fatalf("no line with %q:\n%s", text, screen(m))
+		return -1
+	}
+	m.Update(tea.MouseClickMsg{X: 10, Y: line("Simulators"), Button: tea.MouseLeft})
+	if !strings.Contains(screen(m), "every simulator") {
+		t.Fatal("a click does not open the group")
+	}
+	m.Update(tea.MouseWheelMsg{X: 10, Y: 6, Button: tea.MouseWheelDown})
+	m.Update(tea.MouseClickMsg{X: 10, Y: line("Slack"), Button: tea.MouseLeft})
+	if act.source != "app:Slack" || m.mode != modeList {
+		t.Fatalf("a click does not capture the app: %q", act.source)
+	}
+	if m.View().MouseMode == tea.MouseModeCellMotion {
+		t.Fatal("the list takes the mouse: selecting text in the terminal would stop working")
 	}
 }
 
@@ -427,5 +489,78 @@ func TestTunnelsSayWhyTheyWereNotDecrypted(t *testing.T) {
 	press(m, "g", "enter")
 	if out := screen(m); !strings.Contains(out, "why: passed through: on no_decrypt") || strings.Contains(out, "error:") {
 		t.Fatalf("details:\n%s", out)
+	}
+}
+
+func TestFilterSearchesBodiesAndHeaders(t *testing.T) {
+	var z bytes.Buffer
+	zw := gzip.NewWriter(&z)
+	_, _ = zw.Write([]byte(`{"pedido":"A04FBEEB","cliente":"Ana Souza"}`))
+	_ = zw.Close()
+	act := &fakeActions{source: "simulator"}
+	m := New(act, "127.0.0.1:9090", []store.Flow{
+		{ID: 1, Kind: store.KindHTTP, Method: "GET", URL: "https://api.test/orders", Status: 200,
+			RespHeader: http.Header{"Content-Encoding": {"gzip"}, "X-Trace-Id": {"t-777"}}, RespBody: store.Body{Data: z.Bytes(), Size: int64(z.Len())}},
+		{ID: 2, Kind: store.KindHTTP, Method: "POST", URL: "https://api.test/login", Status: 401,
+			ReqHeader: http.Header{"Content-Type": {"application/json"}}, ReqBody: store.Body{Data: []byte(`{"user":"ana"}`), Size: 14}},
+		{ID: 3, Kind: store.KindTunnel, Method: "CONNECT", URL: "pinned.test:443", Status: 200},
+	})
+	filter := func(q string) []uint64 {
+		press(m, "/")
+		for range len(m.input) {
+			press(m, "backspace")
+		}
+		typeText(m, q)
+		press(m, "enter")
+		var ids []uint64
+		for _, i := range m.shown {
+			ids = append(ids, m.flows[i].ID)
+		}
+		return ids
+	}
+	for q, want := range map[string]string{
+		"body:a04fbeeb":      "[1]",   // inside a gzip body, any case
+		`body:"ana souza"`:   "[1]",   // a phrase
+		"b:ana":              "[1 2]", // request and response bodies
+		"header:t-777":       "[1]",   // a header value
+		"h:content-type":     "[2]",   // a header name
+		"api.test body:user": "[2]",   // with a plain word
+		"login body:pedido":  "[]",    // every term must match
+		"pinned":             "[3]",   // plain words as before
+	} {
+		if got := fmt.Sprint(filter(q)); got != want {
+			t.Errorf("%s: %s, want %s", q, got, want)
+		}
+	}
+	filter("pinned")
+	if out := screen(m); !strings.Contains(out, "filter pinned") {
+		t.Errorf("header does not show the filter:\n%s", out)
+	}
+	press(m, "/")
+	if !strings.Contains(screen(m), "body:text") {
+		t.Error("the filter prompt does not explain body: and header:")
+	}
+}
+
+func TestResendTheSelectedRequest(t *testing.T) {
+	m, act := newModel() // the newest flow, selected, is POST http://login.test/session
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd != nil || len(act.replayed) != 0 || !strings.Contains(m.status, "r again to resend POST login.test/session") {
+		t.Fatalf("a POST was resent without asking: %q", m.status)
+	}
+	_, cmd = m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	run(m, cmd)
+	if len(act.replayed) != 1 || act.replayed[0].ID != 3 || !strings.Contains(m.status, "resent POST login.test/session: 201 in 84ms") {
+		t.Fatalf("replayed %v status %q", act.replayed, m.status)
+	}
+	press(m, "up") // the tunnel
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"}); cmd != nil || !strings.Contains(m.status, "no request to send again") {
+		t.Fatalf("tunnel: %q", m.status)
+	}
+	press(m, "up", "enter") // GET /cart, from the details: no question asked
+	_, cmd = m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	run(m, cmd)
+	if len(act.replayed) != 2 || act.replayed[1].Method != "GET" || !strings.Contains(screen(m), "resent GET api.shop.test/cart") {
+		t.Fatalf("GET from the details: %v\n%s", act.replayed, screen(m))
 	}
 }
