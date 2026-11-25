@@ -39,7 +39,7 @@ func (m *Model) complete(step int) {
 
 	head, word := lastWord(m.input)
 	field, prefix, rest := "", "", word
-	for _, p := range []struct{ prefix, field string }{{"body:", "body"}, {"b:", "body"}, {"header:", "header"}, {"h:", "header"}} {
+	for _, p := range []struct{ prefix, field string }{{"body:", "body"}, {"b:", "body"}, {"header:", "header"}, {"h:", "header"}, {"op:", "op"}} {
 		if r, ok := strings.CutPrefix(strings.ToLower(word), p.prefix); ok {
 			field, prefix, rest = p.field, word[:len(p.prefix)], r
 			break
@@ -90,7 +90,15 @@ func (m *Model) candidates(field string) []string {
 			seen[s]++
 		}
 	}
+	anyGraphQL := false
 	for _, f := range m.flows {
+		anyGraphQL = anyGraphQL || len(f.GraphQL) > 0
+		if field == "op" {
+			for _, o := range f.GraphQL {
+				add(o.Name)
+			}
+			continue
+		}
 		if field == "header" {
 			for k := range f.ReqHeader {
 				add(strings.ToLower(k))
@@ -123,6 +131,9 @@ func (m *Model) candidates(field string) []string {
 	})
 	if field == "" {
 		list = append(list, "body:", "header:")
+		if anyGraphQL {
+			list = append(list, "op:")
+		}
 	}
 	return list
 }

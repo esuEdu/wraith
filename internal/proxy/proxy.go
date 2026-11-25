@@ -87,9 +87,9 @@ type Options struct {
 	// ByUserAgent; nil names none.
 	AppFromUserAgent func(userAgent string) string
 
-	// Mock picks the mock that answers a request of the source (its method and full
-	// URL) instead of the upstream; nil, or a nil answer, forwards it.
-	Mock func(method, url string) *MockResponse
+	// Mock picks the mock that answers a request of the source instead of the upstream;
+	// nil, or a nil answer, forwards it.
+	Mock func(MockRequest) *MockResponse
 }
 
 // Access is how far a device on the network gets (S2.6).

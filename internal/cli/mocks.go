@@ -101,30 +101,55 @@ func (m *mocks) reload() {
 	}
 }
 
-// For is the proxy's Mock function: the response of the first rule that matches.
-func (m *mocks) For(method, rawURL string) *proxy.MockResponse {
+// For is the proxy's Mock function: the response of the first rule that matches. The
+// body is read only for a rule that names a GraphQL operation.
+func (m *mocks) For(req proxy.MockRequest) *proxy.MockResponse {
 	m.mu.Lock()
 	m.reload()
 	rules := m.rules
 	m.mu.Unlock()
-	noQuery, _, _ := strings.Cut(rawURL, "?")
+	noQuery, _, _ := strings.Cut(req.URL, "?")
+	var ops []store.GraphQLOp
+	opsRead := false
 	for _, r := range rules {
-		if r.Off || r.method != "" && r.method != method {
+		if r.Off || r.method != "" && r.method != req.Method {
 			continue
 		}
 		u := noQuery
 		if r.query {
-			u = rawURL
+			u = req.URL
 		}
-		if r.re.MatchString(u) {
-			return m.response(r.Mock)
+		if !r.re.MatchString(u) {
+			continue
 		}
+		if r.Operation != "" {
+			if !opsRead {
+				opsRead = true
+				var body []byte
+				if req.Body != nil {
+					body = req.Body()
+				}
+				ops = store.GraphQLOperations(req.Method, req.URL, req.Header, body)
+			}
+			if len(ops) != 1 || !strings.EqualFold(ops[0].Name, r.Operation) {
+				continue
+			}
+		}
+		return m.response(r.Mock)
 	}
 	return nil
 }
 
+// ruleLabel names a rule on the flows it answers: its match, and its operation.
+func ruleLabel(c config.Mock) string {
+	if c.Operation != "" {
+		return c.Match + " · " + c.Operation
+	}
+	return c.Match
+}
+
 func (m *mocks) response(c config.Mock) *proxy.MockResponse {
-	resp := &proxy.MockResponse{Rule: c.Match, Status: c.Status, Header: http.Header{}, Body: []byte(c.Body), Delay: c.Delay}
+	resp := &proxy.MockResponse{Rule: ruleLabel(c), Status: c.Status, Header: http.Header{}, Body: []byte(c.Body), Delay: c.Delay}
 	for k, v := range c.Headers {
 		resp.Header.Set(k, v)
 	}
@@ -162,14 +187,15 @@ func (m *mocks) Count() int {
 
 const mocksDir = "mocks"
 
-// matchFor is the rule a flow is mocked by: the one that answered it, or its method and
-// URL without the query.
-func matchFor(f store.Flow) string {
-	if f.Mock != "" {
-		return f.Mock
-	}
+// ruleFor is the rule m makes for a flow: its method and URL without the query, and for a
+// single GraphQL operation, its name.
+func ruleFor(f store.Flow) config.Mock {
 	u, _, _ := strings.Cut(f.URL, "?")
-	return f.Method + " " + u
+	c := config.Mock{Match: f.Method + " " + u}
+	if len(f.GraphQL) == 1 && f.GraphQL[0].Name != "" {
+		c.Operation = f.GraphQL[0].Name
+	}
+	return c
 }
 
 // Toggle mocks f with its own response, or stops mocking it if a rule for it is there.
@@ -179,19 +205,23 @@ func (m *mocks) Toggle(f store.Flow) (string, error) {
 	if f.Kind != store.KindHTTP {
 		return "", errors.New("a tunnel was not decrypted: there is no request to mock")
 	}
-	match := matchFor(f)
+	c := ruleFor(f)
+	label := ruleLabel(c)
+	if f.Mock != "" {
+		label = f.Mock // the rule that answered it
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.checked = time.Time{}
 	m.reload()
 	list := append([]config.Mock(nil), m.list...)
 	for i, c := range list {
-		if c.Match == match {
+		if ruleLabel(c) == label {
 			list = append(list[:i], list[i+1:]...)
 			if err := m.write(list); err != nil {
 				return "", err
 			}
-			msg := "stopped mocking " + match
+			msg := "stopped mocking " + label
 			if c.File != "" {
 				msg += "; " + filepath.Join(m.h.Path(), mocksDir, c.File) + " is kept"
 			}
@@ -199,7 +229,7 @@ func (m *mocks) Toggle(f store.Flow) (string, error) {
 		}
 	}
 
-	c := config.Mock{Match: match, Status: f.Status, Headers: map[string]string{}}
+	c.Status, c.Headers = f.Status, map[string]string{}
 	if c.Status == 0 || c.Status == http.StatusSwitchingProtocols {
 		c.Status = http.StatusOK
 	}
@@ -213,7 +243,11 @@ func (m *mocks) Toggle(f store.Flow) (string, error) {
 		return "", err
 	}
 	defer func() { _ = dir.Close() }()
-	c.File = mockFileName(dir, f.URL, ct)
+	name := f.URL
+	if c.Operation != "" {
+		name = strings.TrimSuffix(name, "/") + "/" + c.Operation
+	}
+	c.File = mockFileName(dir, name, ct)
 	if err := dir.WriteFile(c.File, body, 0o600); err != nil {
 		return "", err
 	}
@@ -226,7 +260,7 @@ func (m *mocks) Toggle(f store.Flow) (string, error) {
 	if f.RespBody.Truncated {
 		note = " (only the start of the body was captured)"
 	}
-	return fmt.Sprintf("mocking %s with %d from %s%s; edit the file, or the rule in config.yaml", match, c.Status, path, note), nil
+	return fmt.Sprintf("mocking %s with %d from %s%s; edit the file, or the rule in config.yaml", label, c.Status, path, note), nil
 }
 
 // write saves the list to config.yaml and uses it. The caller holds mu.

@@ -224,6 +224,12 @@ func harEntryFor(f store.Flow, r Redactor) harEntry {
 	if f.Mock != "" {
 		notes = append(notes, "answered by the mock "+f.Mock)
 	}
+	if len(f.GraphQL) > 0 {
+		notes = append(notes, "graphql: "+store.GraphQLLabel(f.GraphQL))
+		if f.GraphQLErrors > 0 {
+			notes = append(notes, fmt.Sprintf("%d GraphQL error(s) in the response", f.GraphQLErrors))
+		}
+	}
 	if f.Throttle != "" {
 		notes = append(notes, "throttled: "+f.Throttle)
 	}

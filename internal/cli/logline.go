@@ -39,6 +39,12 @@ func formatFlow(f store.Flow) string {
 	if f.Err != "" {
 		b.WriteString(" (" + f.Err + ")")
 	}
+	if len(f.GraphQL) > 0 {
+		b.WriteString(" · " + store.GraphQLLabel(f.GraphQL))
+		if f.GraphQLErrors > 0 {
+			fmt.Fprintf(&b, " (%d GraphQL error(s))", f.GraphQLErrors)
+		}
+	}
 	return b.String()
 }
 
@@ -54,6 +60,8 @@ type jsonFlow struct {
 	DurationMS int64  `json:"duration_ms"`
 	Route      string `json:"route,omitempty"`
 	Error      string `json:"error,omitempty"`
+	GraphQL    string `json:"graphql,omitempty"`
+	GQLErrors  int    `json:"graphql_errors,omitempty"`
 }
 
 func formatFlowJSON(f store.Flow) string {
@@ -61,6 +69,7 @@ func formatFlowJSON(f store.Flow) string {
 		Time: f.Start.Format(time.RFC3339Nano), Source: f.Source, Kind: f.Kind, Method: f.Method,
 		URL: cutQuery(f.URL), Status: f.Status, Size: f.RespBody.Size,
 		DurationMS: f.Duration.Milliseconds(), Route: f.Route, Error: f.Err,
+		GraphQL: store.GraphQLLabel(f.GraphQL), GQLErrors: f.GraphQLErrors,
 	})
 	return string(b)
 }

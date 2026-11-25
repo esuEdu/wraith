@@ -35,7 +35,7 @@ wraith export --har flows.har            # save flows from the running wraith, s
 wraith start --throttle 3g               # slow the captured app's network
 ```
 
-In the live view, `Enter` shows a request's headers, body, timing and, for a WebSocket, its messages; `m` mocks a request with its response (the body goes to a file to edit) and `t` steps through slow-network profiles.
+In the live view, `Enter` shows a request's headers, body, timing and, for a WebSocket, its messages; `m` mocks a request with its response (the body goes to a file to edit), `=` compares two requests, and `t` steps through slow-network profiles. GraphQL requests are listed by their operation (`query GetCart`), and `op:GetCart` filters them.
 
 Everything else, including the configuration file and every command, is in the [documentation](https://esuedu.github.io/wraith/docs/).
 

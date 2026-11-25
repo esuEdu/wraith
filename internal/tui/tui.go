@@ -71,6 +71,7 @@ const (
 	modeDetail
 	modeFilter
 	modeSource
+	modeCompare
 )
 
 // FlowMsg delivers a newly captured flow.
@@ -119,6 +120,7 @@ type Model struct {
 		at time.Time
 	}
 	pick   picker
+	cmp    compareState      // = marks a request and compares another with it
 	labels map[string]string // source → the name the picker showed for it
 
 	dev     DeviceSetup // zero without --device
@@ -208,6 +210,12 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.typing(k)
 	case modeSource:
 		return m.picking(k)
+	case modeCompare:
+		if key == "ctrl+c" {
+			return m, tea.Quit
+		}
+		m.comparing(key)
+		return m, nil
 	case modeDetail:
 		switch key {
 		case "esc", "q", "enter", "backspace":
@@ -244,6 +252,8 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.replay()
 		case "m":
 			m.toggleMock()
+		case "=":
+			m.markOrCompare()
 		case "b":
 			return m, m.copyBody()
 		case "h":
@@ -298,6 +308,8 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.replay()
 	case "m":
 		m.toggleMock()
+	case "=":
+		m.markOrCompare()
 	case "t":
 		m.cycleThrottle()
 	case "e":
