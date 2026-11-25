@@ -238,8 +238,9 @@ func TestR6_3_ExitCodes(t *testing.T) {
 	})
 	t.Run("state: system proxy cannot be set", func(t *testing.T) {
 		e := newEnv(t)
-		e.mac.SetFailOn("networksetup -setwebproxystate Wi-Fi on")
-		if code := e.run("start", "--port", freePort(t)); code != ExitState {
+		port := freePort(t)
+		e.mac.SetFailOn("networksetup -setsecurewebproxy Wi-Fi 127.0.0.1 " + port) // only start sets this
+		if code := e.run("start", "--port", port); code != ExitState {
 			t.Fatalf("exit %d, want %d; stderr %q", code, ExitState, e.stderr)
 		}
 		e.mac.SetFailOn("")

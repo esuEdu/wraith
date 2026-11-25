@@ -496,14 +496,11 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}()
 
 	if !noSystemProxy {
-		warnings, err := sp.Check(ctx)
-		if err != nil {
-			return fail(ExitState, "reading proxy settings: %v", err)
-		}
+		warnings, err := sp.CheckAndEnable(ctx, cfg.Port)
 		for _, w := range warnings {
 			a.info("warning: %s", w)
 		}
-		if err := sp.Enable(ctx, cfg.Port); err != nil {
+		if err != nil {
 			return fail(ExitState, "setting the system proxy: %v", err)
 		}
 		systemSet = true

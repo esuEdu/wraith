@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/esuEdu/wraith/internal/execx"
@@ -128,21 +129,53 @@ func parseServices(out []byte) []serviceEntry {
 	return list
 }
 
-// Snapshot reads the web and secure web proxy settings of each service.
+// Snapshot reads the web and secure web proxy settings of each service. networksetup
+// takes a few tens of milliseconds a call, so the reads run side by side.
 func (m *Manager) Snapshot(ctx context.Context, services []string) ([]Service, error) {
-	snap := make([]Service, 0, len(services))
-	for _, name := range services {
-		web, err := m.get(ctx, "-getwebproxy", name)
-		if err != nil {
-			return nil, err
+	snap := make([]Service, len(services))
+	for i, name := range services {
+		snap[i].Name = name
+	}
+	err := each(2*len(services), func(i int) error {
+		s := &snap[i/2]
+		var err error
+		if i%2 == 0 {
+			s.Web, err = m.get(ctx, "-getwebproxy", s.Name)
+		} else {
+			s.Secure, err = m.get(ctx, "-getsecurewebproxy", s.Name)
 		}
-		secure, err := m.get(ctx, "-getsecurewebproxy", name)
-		if err != nil {
-			return nil, err
-		}
-		snap = append(snap, Service{Name: name, Web: web, Secure: secure})
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 	return snap, nil
+}
+
+// read lists the enabled services and reads their settings.
+func (m *Manager) read(ctx context.Context) ([]string, []Service, error) {
+	services, err := m.Services(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	snap, err := m.Snapshot(ctx, services)
+	return services, snap, err
+}
+
+// each runs f(0) to f(n-1) at once and returns the error of the lowest i that failed.
+func each(n int, f func(i int) error) error {
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() { errs[i] = f(i) })
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Manager) get(ctx context.Context, verb, service string) (Setting, error) {
@@ -191,6 +224,18 @@ func parseSetting(out []byte) (Setting, error) {
 // secure web proxies at 127.0.0.1:port. If any change fails, the ones already made are
 // rolled back and state.json is removed.
 func (m *Manager) Enable(ctx context.Context, port int) error {
+	if err := m.canEnable(port); err != nil {
+		return err
+	}
+	services, snap, err := m.read(ctx)
+	if err != nil {
+		return err
+	}
+	return m.enable(ctx, port, services, snap)
+}
+
+// canEnable refuses a bad port, and a state file: wraith has the proxy set already.
+func (m *Manager) canEnable(port int) error {
 	if err := execx.CheckPort(port); err != nil {
 		return err
 	}
@@ -199,16 +244,12 @@ func (m *Manager) Enable(ctx context.Context, port int) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	services, err := m.Services(ctx)
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+func (m *Manager) enable(ctx context.Context, port int, services []string, snap []Service) error {
 	if len(services) == 0 {
 		return errors.New("no enabled network service to set a proxy on")
-	}
-	snap, err := m.Snapshot(ctx, services)
-	if err != nil {
-		return err
 	}
 	for _, s := range snap {
 		if s.Web.Auth || s.Secure.Auth {
@@ -220,13 +261,13 @@ func (m *Manager) Enable(ctx context.Context, port int) error {
 		return err
 	}
 
+	// -setwebproxy also turns the proxy on (networksetup(8): "Turns proxy on."), so no
+	// -setwebproxystate follows: two commands a service instead of four.
 	p := strconv.Itoa(port)
 	for _, s := range snap {
 		for _, cmd := range [][]string{
 			{"-setwebproxy", s.Name, "127.0.0.1", p},
-			{"-setwebproxystate", s.Name, "on"},
 			{"-setsecurewebproxy", s.Name, "127.0.0.1", p},
-			{"-setsecurewebproxystate", s.Name, "on"},
 		} {
 			if _, err := m.run.Run(ctx, "networksetup", cmd...); err != nil {
 				if rerr := m.Restore(context.WithoutCancel(ctx)); rerr != nil {
@@ -301,9 +342,10 @@ func (m *Manager) restore(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// put restores one setting: server and port first, then on/off. A setting that never had
-// a server is cleared with `-setwebproxy <service> "" 0` (checked on macOS: it empties
-// both fields, and switches the proxy on, so the state command after it matters).
+// put restores one setting: server and port first, then off if it was off. A setting that
+// never had a server is cleared with `-setwebproxy <service> "" 0` (checked on macOS: it
+// empties both fields, and switches the proxy on, so the state command after it matters).
+// Setting the server turns the proxy on, so one that was on needs nothing more.
 func (m *Manager) put(ctx context.Context, service, setVerb, stateVerb string, s Setting) error {
 	server, port := s.Server, "0"
 	if server != "" || s.Port != 0 {
@@ -315,11 +357,10 @@ func (m *Manager) put(ctx context.Context, service, setVerb, stateVerb string, s
 	if _, err := m.run.Run(ctx, "networksetup", setVerb, service, server, port); err != nil {
 		return err
 	}
-	state := "off"
 	if s.Enabled {
-		state = "on"
+		return nil
 	}
-	_, err := m.run.Run(ctx, "networksetup", stateVerb, service, state)
+	_, err := m.run.Run(ctx, "networksetup", stateVerb, service, "off")
 	return err
 }
 
