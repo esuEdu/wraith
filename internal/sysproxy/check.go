@@ -11,36 +11,66 @@ import (
 // VPN set up (R4.4): a PAC file, proxy auto-discovery, or a proxy pushed by a VPN or
 // configuration profile, which shows in `scutil --proxy` but on no network service.
 func (m *Manager) Check(ctx context.Context) ([]string, error) {
-	services, err := m.Services(ctx)
+	_, snap, err := m.read(ctx)
 	if err != nil {
 		return nil, err
 	}
-	snap, err := m.Snapshot(ctx, services)
+	return m.check(ctx, snap)
+}
+
+// CheckAndEnable is Check then Enable, reading each service's settings once. The
+// warnings are returned even when Enable fails, to be shown with its error.
+func (m *Manager) CheckAndEnable(ctx context.Context, port int) ([]string, error) {
+	if err := m.canEnable(port); err != nil {
+		return nil, err
+	}
+	services, snap, err := m.read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := m.check(ctx, snap)
+	if err != nil {
+		return nil, err
+	}
+	return warnings, m.enable(ctx, port, services, snap)
+}
+
+// check reads each service's PAC and auto-discovery settings, all services at once, and
+// the effective proxy from scutil.
+func (m *Manager) check(ctx context.Context, snap []Service) ([]string, error) {
+	type found struct {
+		pac, discovery bool
+		url            string
+	}
+	per := make([]found, len(snap))
+	err := each(len(snap), func(i int) error {
+		out, err := m.run.Run(ctx, "networksetup", "-getautoproxyurl", snap[i].Name)
+		if err != nil {
+			return err
+		}
+		kv := parseColonPairs(string(out))
+		per[i].pac, per[i].url = kv["Enabled"] == "Yes", kv["URL"]
+		out, err = m.run.Run(ctx, "networksetup", "-getproxyautodiscovery", snap[i].Name)
+		if err != nil {
+			return err
+		}
+		per[i].discovery = parseColonPairs(string(out))["Auto Proxy Discovery"] == "On"
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	var warnings []string
 	anyPAC, anyWeb, anySecure := false, false, false
-	for _, s := range snap {
+	for i, s := range snap {
 		anyWeb = anyWeb || s.Web.Enabled
 		anySecure = anySecure || s.Secure.Enabled
-
-		out, err := m.run.Run(ctx, "networksetup", "-getautoproxyurl", s.Name)
-		if err != nil {
-			return nil, err
-		}
-		kv := parseColonPairs(string(out))
-		if kv["Enabled"] == "Yes" {
+		if per[i].pac {
 			anyPAC = true
-			warnings = append(warnings, fmt.Sprintf("%s uses a PAC file (%s); wraith's proxy takes precedence while it runs", s.Name, kv["URL"]))
+			warnings = append(warnings, fmt.Sprintf("%s uses a PAC file (%s); wraith's proxy takes precedence while it runs", s.Name, per[i].url))
 		}
-
-		out, err = m.run.Run(ctx, "networksetup", "-getproxyautodiscovery", s.Name)
-		if err != nil {
-			return nil, err
-		}
-		if parseColonPairs(string(out))["Auto Proxy Discovery"] == "On" {
+		if per[i].discovery {
 			warnings = append(warnings, fmt.Sprintf("%s has proxy auto-discovery on; wraith's proxy takes precedence while it runs", s.Name))
 		}
 	}

@@ -213,7 +213,7 @@ func TestR4_6_RestoreIsSafeWithNothingToRestore(t *testing.T) {
 func TestFailedEnableRollsBack(t *testing.T) {
 	m, mac, h := setup(t)
 	webBefore, _ := settings(mac)
-	mac.SetFailOn("networksetup -setsecurewebproxystate Wi-Fi on") // only Enable turns it on
+	mac.SetFailOn("networksetup -setsecurewebproxy Wi-Fi 127.0.0.1 9090") // only Enable sets this
 	err := m.Enable(context.Background(), 9090)
 	if err == nil || !strings.Contains(err.Error(), "fake failure") {
 		t.Fatalf("err = %v", err)
@@ -308,5 +308,41 @@ func TestEffectiveHTTPSAndStateLeft(t *testing.T) {
 	}
 	if !m.StateLeft() {
 		t.Fatal("state not reported after Enable")
+	}
+}
+
+// Starting is waited on: networksetup takes 30-180 ms a call, so CheckAndEnable reads each
+// setting once, and sets each service's two proxies with one command each.
+func TestCheckAndEnableRunsFewCommands(t *testing.T) {
+	m, mac, h := setup(t)
+	webBefore, secureBefore := settings(mac)
+	if _, err := m.CheckAndEnable(context.Background(), 9090); err != nil {
+		t.Fatal(err)
+	}
+	count := map[string]int{}
+	for _, c := range m.run.(*execx.Fake).Calls() {
+		count[strings.Fields(c)[1]]++
+	}
+	// Two enabled services (Thunderbolt Bridge and Wi-Fi).
+	want := map[string]int{"-listallnetworkservices": 1, "-getwebproxy": 2, "-getsecurewebproxy": 2,
+		"-getautoproxyurl": 2, "-getproxyautodiscovery": 2, "-setwebproxy": 2, "-setsecurewebproxy": 2, "--proxy": 1}
+	if !reflect.DeepEqual(count, want) {
+		t.Fatalf("commands run: %v\nwant %v", count, want)
+	}
+	web, secure := settings(mac)
+	on := Setting{Enabled: true, Server: "127.0.0.1", Port: 9090}
+	for _, svc := range []string{"Wi-Fi", "Thunderbolt Bridge"} {
+		if web[svc] != on || secure[svc] != on {
+			t.Errorf("%s: web %+v secure %+v, want %+v", svc, web[svc], secure[svc], on)
+		}
+	}
+	if err := m.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if web, secure := settings(mac); !reflect.DeepEqual(web, webBefore) || !reflect.DeepEqual(secure, secureBefore) {
+		t.Fatalf("after restore: web %+v secure %+v", web, secure)
+	}
+	if stateExists(h) {
+		t.Fatal("state.json left")
 	}
 }
