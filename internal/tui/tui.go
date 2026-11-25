@@ -47,6 +47,9 @@ type Choice struct {
 	Source string // what SetSource gets, e.g. "simulator:<udid>" or "app:Safari"
 	Label  string // what the picker and the header show, e.g. "iPhone 17 Pro"
 	Note   string // e.g. "iOS 26.1 · CA installed"
+	// Parent is the source this one is listed under, e.g. an app under the simulator it
+	// runs in ("simulator:<udid>"); empty for a source of its own.
+	Parent string
 }
 
 type mode int

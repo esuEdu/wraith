@@ -82,6 +82,9 @@ type Options struct {
 	Unlock func(peer net.IP, key, userAgent string) bool
 	// CACert is the CA certificate (PEM) wraith hands out at /ca to allowed devices.
 	CACert []byte
+	// AppFromUserAgent names the app from a request's User-Agent, for verdicts with
+	// ByUserAgent; nil names none.
+	AppFromUserAgent func(userAgent string) string
 }
 
 // Access is how far a device on the network gets (S2.6).
@@ -98,6 +101,21 @@ type Verdict struct {
 	InSource bool
 	Decrypt  bool   // may be decrypted (still subject to Leaf and Decrypt(host))
 	Label    string // shown in front of its log lines, e.g. "sim iPhone 17 · Shop"
+	// ByUserAgent adds the app each request names in its User-Agent to the label, through
+	// Options.AppFromUserAgent: a physical device has no process to name (S2.6).
+	ByUserAgent bool
+}
+
+// withApp is v for one request: with the app from its User-Agent in the label, when v
+// asks for it and one is named.
+func (s *Server) withApp(v Verdict, userAgent string) Verdict {
+	if !v.ByUserAgent || s.opts.AppFromUserAgent == nil {
+		return v
+	}
+	if app := s.opts.AppFromUserAgent(userAgent); app != "" {
+		v.Label += " · " + app
+	}
+	return v
 }
 
 type connKey struct{}
@@ -301,7 +319,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this device may not use wraith yet: scan the QR code in wraith's window", http.StatusForbidden)
 		return
 	}
-	r = r.WithContext(context.WithValue(r.Context(), verdictKey{}, s.verdictFor(r.Context())))
+	r = r.WithContext(context.WithValue(r.Context(), verdictKey{}, s.withApp(s.verdictFor(r.Context()), r.UserAgent())))
 	if r.Method == http.MethodConnect {
 		s.serveConnect(w, r)
 		return

@@ -41,6 +41,7 @@ type liveState struct {
 	caFP        *[32]byte
 	macTrusted  bool
 	runningApps func() ([]source.App, error)
+	simApps     func() ([]source.SimApp, error)
 	devs        *devices // nil without --device
 	srv         *proxy.Server
 
@@ -51,7 +52,7 @@ type liveState struct {
 }
 
 func newLiveState(h *home.Home, cfg config.Config, src source.Source, flows *store.Store, router *route.Router) *liveState {
-	l := &liveState{h: h, flows: flows, router: router, redact: cfg.Export.RedactHeaders, runningApps: source.RunningApps}
+	l := &liveState{h: h, flows: flows, router: router, redact: cfg.Export.RedactHeaders, runningApps: source.RunningApps, simApps: source.RunningSimApps}
 	l.src.Store(&src)
 	nd, bp := slices.Clone(cfg.NoDecrypt), slices.Clone(cfg.Bypass)
 	l.noDecrypt.Store(&nd)
@@ -96,6 +97,16 @@ func (l liveActions) Choices() ([]tui.Choice, error) {
 			errs = append(errs, fmt.Errorf("simulators: %w", err))
 		}
 		slices.SortFunc(devs, func(a, b sim.Device) int { return strings.Compare(a.Name+a.Runtime, b.Name+b.Runtime) })
+		inSim := map[string][]string{}
+		if l.simApps != nil {
+			apps, err := l.simApps()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("listing simulator apps: %w", err))
+			}
+			for _, a := range apps {
+				inSim[a.UDID] = append(inSim[a.UDID], a.Name)
+			}
+		}
 		for _, d := range devs {
 			note := runtimeName(d.Runtime)
 			if l.caFP != nil {
@@ -110,6 +121,10 @@ func (l liveActions) Choices() ([]tui.Choice, error) {
 				note += " · not decrypted (--no-decrypt)"
 			}
 			out = append(out, tui.Choice{Source: "simulator:" + d.UDID, Label: d.Name, Note: note})
+			for _, app := range inSim[strings.ToUpper(d.UDID)] {
+				out = append(out, tui.Choice{Source: "app:" + app, Label: app, Parent: "simulator:" + d.UDID,
+					Note: "app in " + d.Name + " · app:" + app + " matches it in any simulator"})
+			}
 		}
 	}
 	if l.runningApps != nil {

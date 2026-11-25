@@ -91,6 +91,9 @@ func TestR1_5_PickerOffersBootedSimulatorsAndMacApps(t *testing.T) {
 	acts.(liveActions).runningApps = func() ([]source.App, error) {
 		return []source.App{{Name: "Safari", Path: "/Applications/Safari.app"}}, nil
 	}
+	acts.(liveActions).simApps = func() ([]source.SimApp, error) {
+		return []source.SimApp{{UDID: strings.ToUpper(simtest.Booted), Name: "Shop"}, {UDID: "0000", Name: "Elsewhere"}}, nil
+	}
 
 	var sims []tui.Choice
 	waitUntil(t, "the booted simulator to be listed with the CA", func() bool {
@@ -110,6 +113,15 @@ func TestR1_5_PickerOffersBootedSimulatorsAndMacApps(t *testing.T) {
 		t.Fatalf("simulator choice %+v", c)
 	}
 	list, _ := acts.Choices()
+	var inSim []tui.Choice
+	for _, c := range list {
+		if c.Parent != "" {
+			inSim = append(inSim, c)
+		}
+	}
+	if len(inSim) != 1 || inSim[0].Source != "app:Shop" || inSim[0].Parent != "simulator:"+simtest.Booted || !strings.Contains(inSim[0].Note, "app in iPhone 18 Pro Max") {
+		t.Fatalf("apps in the simulator: %+v", inSim)
+	}
 	last := list[len(list)-1]
 	if last.Source != "app:Safari" || !strings.Contains(last.Note, "not decrypted until `wraith ca trust --mac`") {
 		t.Fatalf("app choice %+v", last)

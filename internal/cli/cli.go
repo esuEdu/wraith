@@ -439,6 +439,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 		popts.Decrypt = live.decrypt
 	}
 	popts.Classify = a.classifier(&live.src, sm, macTrusted)
+	popts.AppFromUserAgent = source.AppFromUserAgent
 	popts.Dialer = router
 	popts.Route = func(host string) string { r, _ := router.Route(host); return r }
 	if len(cfg.Bypass) > 0 {
@@ -679,7 +680,7 @@ func (a *app) classifier(cur *atomic.Pointer[source.Source], sm *sim.Manager, ma
 			if !cur.Load().Matches(o, nil) {
 				return proxy.Verdict{}
 			}
-			return proxy.Verdict{InSource: true, Decrypt: true, Label: o.Label()}
+			return proxy.Verdict{InSource: true, Decrypt: true, Label: o.Label(), ByUserAgent: true}
 		}
 		o, err := lookup(ctx, c.Port, l.Port)
 		if err != nil || !cur.Load().Matches(o, names.name) { // R1.5: the source as of now

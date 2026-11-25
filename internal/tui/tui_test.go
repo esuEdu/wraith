@@ -564,3 +564,29 @@ func TestResendTheSelectedRequest(t *testing.T) {
 		t.Fatalf("GET from the details: %v\n%s", act.replayed, screen(m))
 	}
 }
+
+func TestSourcePickerListsAppsUnderTheirSimulator(t *testing.T) {
+	m, act := newModel()
+	act.source = "app:Shop" // an app in a simulator: its simulator's group opens
+	act.choices = []Choice{
+		{Source: "simulator:A", Label: "iPhone 17 Pro", Note: "iOS 26.1"},
+		{Source: "app:Shop", Label: "Shop", Parent: "simulator:A", Note: "app in iPhone 17 Pro"},
+		{Source: "app:Bank", Label: "Bank", Parent: "simulator:A", Note: "app in iPhone 17 Pro"},
+		{Source: "app:Slack", Label: "Slack", Note: "Mac app"},
+	}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	run(m, func() tea.Cmd { _, c := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"}); return c }())
+	out := screen(m)
+	for _, want := range []string{"▾ Simulators", "1 booted", "  iPhone 17 Pro", "▸ ●     Shop", "    Bank", "▸ Mac apps", "1 running"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Slack") {
+		t.Errorf("the Mac apps group is open:\n%s", out)
+	}
+	press(m, "down", "enter") // Bank, in the simulator
+	if act.source != "app:Bank" {
+		t.Fatalf("source %q", act.source)
+	}
+}
