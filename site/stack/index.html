@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>wraith stack and design</title>
+<meta name="description" content="How wraith is built and how it looks: the Go stack, the macOS tools it runs, its packages, how it is tested and released, and the Heliotrope Haze design system of the live view and this site.">
+<link rel="icon" href="../assets/favicon.png?v=3" type="image/png" sizes="64x64">
+<link rel="icon" href="../assets/favicon.svg?v=3" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png?v=3">
+<meta name="theme-color" content="#14101f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<header class="site-header gutter">
+  <div class="container">
+    <a class="brand" href="../" aria-label="wraith home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c980f2"/><stop offset="1" stop-color="#ff7edb"/></linearGradient></defs><path d="M16 3C9.9 3 5 7.9 5 14v14l3.7-2.6L12.3 28l3.7-2.6 3.7 2.6 3.6-2.6L27 28V14C27 7.9 22.1 3 16 3z" fill="url(#brand-g)"/><circle cx="12" cy="14" r="2.2" fill="#14101f"/><circle cx="20" cy="14" r="2.2" fill="#14101f"/></svg>
+      wraith
+    </a>
+    <nav aria-label="Main">
+      <a href="../docs/">Docs</a>
+      <a class="wide-only" href="../docs/#commands">Commands</a>
+      <a href="./" aria-current="page">Stack</a>
+      <a href="https://github.com/esuEdu/wraith">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="container gutter">
+  <div class="docs">
+    <aside class="toc">
+      <p>On this page</p>
+      <details>
+        <summary>Contents</summary>
+        <ol>
+          <li><a href="#stack">Stack</a></li>
+          <li><a href="#tools">macOS tools</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#build">Build and release</a></li>
+          <li><a href="#principles">Design principles</a></li>
+          <li><a href="#color">Color</a></li>
+          <li><a href="#live-view">The live view's colors</a></li>
+          <li><a href="#type">Type</a></li>
+          <li><a href="#components">Components</a></li>
+          <li><a href="#mascot">Mascot and icons</a></li>
+          <li><a href="#motion">Motion</a></li>
+        </ol>
+      </details>
+    </aside>
+
+    <article class="doc">
+      <header>
+        <p class="eyebrow">Under the hood</p>
+        <h1>Stack and <span class="hl">design</span></h1>
+        <p>How wraith is built, and how it looks: one Go binary that talks to macOS through a short list of its own tools, and one palette, Heliotrope Haze, shared by the terminal and this site.</p>
+      </header>
+
+      <section id="stack">
+        <h2>Stack</h2>
+        <p>wraith is written in Go and ships as one binary, built for Apple Silicon and Intel at once. Most of the work is the standard library; seven modules come from outside, each for one job.</p>
+        <div class="cards">
+          <div class="card"><h3>Go 1.26</h3><p>The proxy is <code>net/http</code> and <code>httputil.ReverseProxy</code>; decryption is <code>crypto/tls</code> with a CA from <code>crypto/x509</code>; timing comes from <code>httptrace</code>; bodies and WebSocket messages are decompressed with <code>compress/gzip</code> and <code>flate</code>.</p></div>
+          <div class="card"><h3>Bubble Tea v2 · Lip Gloss v2</h3><p>The live view: Charm's terminal UI framework and its styling library, with <code>charmbracelet/x/ansi</code> to cut styled text to the screen's width.</p></div>
+          <div class="card"><h3>cobra</h3><p>Commands, flags and help, and the shell completion Homebrew installs for zsh, bash and fish.</p></div>
+          <div class="card"><h3>yaml v3</h3><p><code>config.yaml</code>, read strictly (unknown keys are errors) and edited in place so your comments stay.</p></div>
+          <div class="card"><h3>x/sys</h3><p>The kernel's socket table (<code>sysctl</code>), to tell which process opened each connection without running a tool.</p></div>
+          <div class="card"><h3>rsc.io/qr</h3><p>The QR code an iPhone scans to join, drawn in the terminal with half blocks.</p></div>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Module</th><th>Version</th><th>Used for</th></tr></thead>
+          <tbody>
+            <tr><td><code>charm.land/bubbletea/v2</code></td><td>2.1</td><td>The live view's event loop</td></tr>
+            <tr><td><code>charm.land/lipgloss/v2</code></td><td>2.1</td><td>Its colors and layout</td></tr>
+            <tr><td><code>github.com/charmbracelet/x/ansi</code></td><td>0.11</td><td>Width-aware cutting of styled text</td></tr>
+            <tr><td><code>github.com/spf13/cobra</code></td><td>1.10</td><td>Commands and shell completion</td></tr>
+            <tr><td><code>go.yaml.in/yaml/v3</code></td><td>3.0</td><td>The configuration file</td></tr>
+            <tr><td><code>golang.org/x/sys</code></td><td>0.50</td><td>Socket table, file locks</td></tr>
+            <tr><td><code>rsc.io/qr</code></td><td>0.2</td><td>The device setup QR code</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="tools">
+        <h2>macOS tools</h2>
+        <p>Some things only macOS's own tools can do. wraith runs them from a fixed table of absolute paths, with arguments as a list and never through a shell; anything not in the table cannot run, and a test checks the table.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Tool</th><th>What for</th></tr></thead>
+          <tbody>
+            <tr><td><code>networksetup</code></td><td>Read, set and restore each network service's web and secure web proxy</td></tr>
+            <tr><td><code>scutil</code></td><td>The proxy macOS is really using, including one a VPN pushed</td></tr>
+            <tr><td><code>xcrun simctl</code></td><td>List simulators, and put the CA into their trust store</td></tr>
+            <tr><td><code>sqlite3</code></td><td>Check and remove the CA in a simulator's trust store</td></tr>
+            <tr><td><code>security</code></td><td>Trust the CA on the Mac, only when you ask</td></tr>
+            <tr><td><code>ps</code> · <code>lsof</code></td><td>Name the app behind a connection</td></tr>
+            <tr><td><code>plutil</code></td><td>An app's bundle id, for <code>app:com.example.shop</code></td></tr>
+            <tr><td><code>route</code> · <code>ipconfig</code></td><td>The physical interface's route and DNS server, for the VPN bypass</td></tr>
+            <tr><td><code>socketfilterfw</code></td><td>Whether the firewall would keep an iPhone out (read only)</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="architecture">
+        <h2>Architecture</h2>
+        <p>Sixteen packages, each with one job. A connection goes left to right through the first row; the second row is how wraith changes the Mac and puts it back; the third is what you see and touch.</p>
+        <div class="arch">
+          <div class="arch-row">
+            <span class="arch-label">Capture</span>
+            <div class="pkg"><b>proxy</b><span>CONNECT tunnels, decryption, mocks, throttling, WebSocket tap</span></div>
+            <div class="pkg"><b>source</b><span>which process, simulator or device connected</span></div>
+            <div class="pkg"><b>route</b><span>VPN or the physical interface, IPv6 first</span></div>
+            <div class="pkg"><b>store</b><span>flows in memory, GraphQL operations, decoding</span></div>
+          </div>
+          <div class="arch-row">
+            <span class="arch-label">The Mac</span>
+            <div class="pkg"><b>sysproxy</b><span>set the system proxy, restore it, even after a crash</span></div>
+            <div class="pkg"><b>ca</b><span>the CA and a leaf per host</span></div>
+            <div class="pkg"><b>sim</b><span>simulators' trust stores</span></div>
+            <div class="pkg"><b>keychain</b><span>the Mac's trust, on request</span></div>
+            <div class="pkg"><b>execx</b><span>the only way a tool runs</span></div>
+            <div class="pkg"><b>home</b><span>~/.wraith, private and checked</span></div>
+          </div>
+          <div class="arch-row">
+            <span class="arch-label">You</span>
+            <div class="pkg"><b>tui</b><span>the live view</span></div>
+            <div class="pkg"><b>cli</b><span>commands, completion, live actions</span></div>
+            <div class="pkg"><b>config</b><span>config.yaml, strict</span></div>
+            <div class="pkg"><b>export</b><span>HAR and curl, redacted</span></div>
+            <div class="pkg"><b>control</b><span>wraith export talking to wraith start</span></div>
+            <div class="pkg"><b>version</b><span>build info</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="build">
+        <h2>Build and release</h2>
+        <ul>
+          <li><strong>Every pull request</strong> runs on macOS: <code>gofmt</code>, <code>go vet</code> and golangci-lint (with gosec), the tests with the race detector, CodeQL, govulncheck and a dependency review. Titles follow conventional commits.</li>
+          <li><strong>Rules are tested by name.</strong> The behaviour wraith promises (R1.1, S2.6…) is written down, and each rule has a test named after it, such as <code>TestS2_1_ListensOnLoopbackOnly</code>; a check counts them.</li>
+          <li><strong>A tag releases.</strong> <code>v1.5.0</code> on main runs the checks again, then publishes the source tarball, its SHA-256 and a build provenance attestation you can verify with <code>gh attestation verify</code>.</li>
+          <li><strong>Homebrew builds it on your Mac</strong> from that tarball, so there is no unsigned binary for Gatekeeper to stop. The tap follows new releases on its own.</li>
+          <li><strong>This site</strong> is plain HTML, one stylesheet and a little JavaScript, with no framework and no build step, published from the repository's <code>site/</code> folder by GitHub Pages.</li>
+        </ul>
+      </section>
+
+      <section id="principles">
+        <h2>Design principles</h2>
+        <div class="cards">
+          <div class="card"><h3>The terminal first</h3><p>Everything happens in the terminal. The site draws the live view as it really looks, row for row, rather than inventing a screenshot.</p></div>
+          <div class="card"><h3>One accent</h3><p>Heliotrope violet marks what you can act on: keys, the selected tab, the badge. Pink is kept for the selection bar and highlights.</p></div>
+          <div class="card"><h3>Color carries meaning</h3><p>Green is a 2xx, yellow a 4xx, red a 5xx or an error, cyan a bypassed route. Nothing is colored only to decorate.</p></div>
+          <div class="card"><h3>Calm by default</h3><p>Secondary text is soft, rules are dim, and motion is slow and small. All of it stops when you ask for less motion.</p></div>
+        </div>
+      </section>
+
+      <section id="color">
+        <h2>Color</h2>
+        <p>Heliotrope Haze is a dark violet background with soft pastels, after Rex's theme of the same name. The live view uses it as is; the terminal panels on this site use it in light and dark pages alike, because they show a terminal.</p>
+        <h3>Heliotrope Haze</h3>
+        <div class="swatches">
+          <div class="swatch"><span class="chip" style="--c:#14101f"></span><b>background</b><code>#14101f</code><small>the screen</small></div>
+          <div class="swatch"><span class="chip" style="--c:#3a2b5c"></span><b>surface</b><code>#3a2b5c</code><small>selected row, tabs</small></div>
+          <div class="swatch"><span class="chip" style="--c:#6a5f85"></span><b>comment</b><code>#6a5f85</code><small>rules, times, punctuation</small></div>
+          <div class="swatch"><span class="chip" style="--c:#b6abd0"></span><b>soft</b><code>#b6abd0</code><small>paths, notes, hints</small></div>
+          <div class="swatch"><span class="chip" style="--c:#dcd2ee"></span><b>foreground</b><code>#dcd2ee</code><small>text</small></div>
+          <div class="swatch"><span class="chip" style="--c:#f0eaf9"></span><b>bright</b><code>#f0eaf9</code><small>bold text, the selection</small></div>
+          <div class="swatch"><span class="chip" style="--c:#c980f2"></span><b>heliotrope</b><code>#c980f2</code><small>the accent</small></div>
+          <div class="swatch"><span class="chip" style="--c:#ff7edb"></span><b>pink</b><code>#ff7edb</code><small>selection bar, highlights</small></div>
+          <div class="swatch"><span class="chip" style="--c:#72e0aa"></span><b>green</b><code>#72e0aa</code><small>2xx, POST, strings</small></div>
+          <div class="swatch"><span class="chip" style="--c:#fdca6a"></span><b>yellow</b><code>#fdca6a</code><small>4xx, PUT, numbers</small></div>
+          <div class="swatch"><span class="chip" style="--c:#f66e93"></span><b>red</b><code>#f66e93</code><small>5xx, errors, DELETE</small></div>
+          <div class="swatch"><span class="chip" style="--c:#7a9bf5"></span><b>blue</b><code>#7a9bf5</code><small>GET, header names, keys</small></div>
+          <div class="swatch"><span class="chip" style="--c:#5fd0e5"></span><b>cyan</b><code>#5fd0e5</code><small>the direct route</small></div>
+        </div>
+        <h3>The site's tokens</h3>
+        <p>The pages follow your system's light or dark setting. Each token has both values; the gradient runs from the accent to the second accent.</p>
+        <div class="table-wrap"><table class="tokens">
+          <thead><tr><th>Token</th><th>Light</th><th>Dark</th><th>Used for</th></tr></thead>
+          <tbody>
+            <tr><td><code>--bg</code></td><td><span class="dot" style="--c:#f8f5fd"></span>#f8f5fd</td><td><span class="dot" style="--c:#100c1a"></span>#100c1a</td><td>The page</td></tr>
+            <tr><td><code>--surface</code></td><td><span class="dot" style="--c:#ffffff"></span>#ffffff</td><td><span class="dot" style="--c:#181226"></span>#181226</td><td>Cards, tables, buttons</td></tr>
+            <tr><td><code>--ink</code></td><td><span class="dot" style="--c:#1e1633"></span>#1e1633</td><td><span class="dot" style="--c:#e4dcf3"></span>#e4dcf3</td><td>Text</td></tr>
+            <tr><td><code>--muted</code></td><td><span class="dot" style="--c:#5f5478"></span>#5f5478</td><td><span class="dot" style="--c:#a79dc2"></span>#a79dc2</td><td>Secondary text</td></tr>
+            <tr><td><code>--line</code></td><td><span class="dot" style="--c:#e6ddf3"></span>#e6ddf3</td><td><span class="dot" style="--c:#2a2140"></span>#2a2140</td><td>Borders and rules</td></tr>
+            <tr><td><code>--accent</code></td><td><span class="dot" style="--c:#8a3fd0"></span>#8a3fd0</td><td><span class="dot" style="--c:#c980f2"></span>#c980f2</td><td>Links, focus, active items</td></tr>
+            <tr><td><code>--accent-2</code></td><td><span class="dot" style="--c:#c2349a"></span>#c2349a</td><td><span class="dot" style="--c:#ff7edb"></span>#ff7edb</td><td>Highlights, the gradient's end</td></tr>
+            <tr><td><code>--code-bg</code></td><td><span class="dot" style="--c:#f0e9f9"></span>#f0e9f9</td><td><span class="dot" style="--c:#1e1730"></span>#1e1730</td><td>Code and commands</td></tr>
+          </tbody>
+        </table></div>
+        <div class="gradient-bar" role="img" aria-label="The accent gradient"></div>
+        <h3>The terminal's own colors</h3>
+        <p>With <code>theme: terminal</code> in <code>config.yaml</code>, the live view uses only the terminal's 16 colors, bold, faint and reverse, so it follows any terminal theme, light or dark. Cyan takes the accent's place; the meanings stay the same.</p>
+      </section>
+
+      <section id="live-view">
+        <h2>The live view's colors</h2>
+        <p>Every color in a row means something. This is how each part is drawn:</p>
+        <figure class="terminal">
+          <div class="chrome" aria-hidden="true"><i></i><i></i><i></i></div>
+<pre><span class="t-badge"> wraith </span> <span class="t-soft">127.0.0.1:9090</span><span class="t-dim"> · </span><span class="t-soft">capturing </span><span class="t-acc"><b>iPhone 17</b></span><span class="t-dim"> · </span><span class="t-warn">throttle 3g</span>
+ <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/cart</span>
+ <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">201</span> <span class="t-post">POST   </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/graphql</span>  <span class="t-acc">mutation AddItem</span>
+ <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-post">POST   </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/graphql</span>  <span class="t-acc">query GetUser</span>  <span class="t-bad">✗ 1 error</span>
+ <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-mag">direct</span> https://rates.partner.example<span class="t-soft">/today</span>
+ <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://cdn.shop.example<span class="t-soft">/img/42.png</span>
+ <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-dim">tun</span> <b>CONNECT</b> <span class="t-dim">vpn   </span> gateway.icloud.com:443  <span class="t-dim">no_decrypt</span>
+<span class="t-mark">▌</span><span class="t-sel">12:04:34 sim iPhone 17 · Shop   503 GET     mock   https://api.shop.example/v2/recs</span>
+ <span class="t-acc"><b>↵</b></span> <span class="t-soft">details</span>  <span class="t-acc"><b>m</b></span> <span class="t-soft">mock</span>  <span class="t-acc"><b>=</b></span> <span class="t-soft">compare</span>  <span class="t-acc"><b>t</b></span> <span class="t-soft">throttle</span>  <span class="t-acc"><b>q</b></span> <span class="t-soft">quit</span></pre>
+        </figure>
+        <div class="table-wrap"><table>
+          <thead><tr><th>What</th><th>Drawn in</th></tr></thead>
+          <tbody>
+            <tr><td>Status</td><td><span class="dot" style="--c:#72e0aa"></span>green 1xx–3xx · <span class="dot" style="--c:#fdca6a"></span>yellow 4xx · <span class="dot" style="--c:#f66e93"></span>red 5xx and errors · <span class="dot" style="--c:#6a5f85"></span>comment for a tunnel</td></tr>
+            <tr><td>Method</td><td>bold: <span class="dot" style="--c:#7a9bf5"></span>GET · <span class="dot" style="--c:#72e0aa"></span>POST · <span class="dot" style="--c:#fdca6a"></span>PUT and PATCH · <span class="dot" style="--c:#f66e93"></span>DELETE</td></tr>
+            <tr><td>Route</td><td><span class="dot" style="--c:#6a5f85"></span>vpn and mock dim · <span class="dot" style="--c:#5fd0e5"></span>direct in cyan · <span class="dot" style="--c:#f66e93"></span>failed in red</td></tr>
+            <tr><td>URL</td><td>the host in the text color, the path <span class="dot" style="--c:#b6abd0"></span>soft</td></tr>
+            <tr><td>GraphQL</td><td>the operation in <span class="dot" style="--c:#c980f2"></span>heliotrope, errors in <span class="dot" style="--c:#f66e93"></span>red</td></tr>
+            <tr><td>Selection</td><td>a <span class="dot" style="--c:#ff7edb"></span>pink bar, the row on <span class="dot" style="--c:#3a2b5c"></span>surface</td></tr>
+            <tr><td>JSON</td><td>keys <span class="dot" style="--c:#7a9bf5"></span>blue, strings <span class="dot" style="--c:#72e0aa"></span>green, numbers <span class="dot" style="--c:#fdca6a"></span>yellow, true/false/null <span class="dot" style="--c:#ff7edb"></span>pink, punctuation <span class="dot" style="--c:#6a5f85"></span>comment</td></tr>
+            <tr><td>Diffs</td><td><span class="dot" style="--c:#f66e93"></span><code>-</code> only in A, <span class="dot" style="--c:#72e0aa"></span><code>+</code> only in B</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="type">
+        <h2>Type</h2>
+        <div class="type-specimens">
+          <div class="specimen"><p class="spec-name">Space Grotesk · display</p><p class="spec display">See your iOS app's HTTPS.</p><p class="spec-note">Headings and the wordmark, 500–700, tight letter spacing.</p></div>
+          <div class="specimen"><p class="spec-name">IBM Plex Sans · body</p><p class="spec body">wraith decrypts traffic from one capture source and passes everything else through untouched.</p><p class="spec-note">Text, 16 px with a 1.6 line height; lines kept under 68 characters.</p></div>
+          <div class="specimen"><p class="spec-name">JetBrains Mono · code</p><p class="spec mono">wraith start --throttle 3g</p><p class="spec-note">Commands, code, keys and every terminal drawing.</p></div>
+        </div>
+        <p>In the terminal, type is whatever your terminal uses; wraith only sets bold, faint and reverse.</p>
+      </section>
+
+      <section id="components">
+        <h2>Components</h2>
+        <p>The pieces this site is made of, each as it really is.</p>
+        <div class="specimen-grid">
+          <div class="specimen"><p class="spec-name">Buttons</p><p class="actions"><a class="button primary" href="../docs/#quick-start">Quick start</a> <a class="button" href="../docs/">Read the docs</a></p></div>
+          <div class="specimen"><p class="spec-name">Command</p><div class="install"><code><span class="prompt">$ </span>brew install esuEdu/tap/wraith</code><button class="copy" type="button" data-copy="brew install esuEdu/tap/wraith">Copy</button></div></div>
+          <div class="specimen"><p class="spec-name">Keys and code</p><p>Press <kbd>m</kbd> to mock, <kbd>t</kbd> to throttle, or filter with <code>op:GetCart</code>.</p></div>
+          <div class="specimen"><p class="spec-name">Callout</p><div class="callout"><p><strong>Check your company's policy.</strong> Sending traffic around a work VPN can break it.</p></div></div>
+        </div>
+        <div class="specimen wide"><p class="spec-name">Steps</p>
+          <ol class="howto">
+            <li>Install with Homebrew.</li>
+            <li>Boot a simulator.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="mascot">
+        <h2>Mascot and icons</h2>
+        <div class="mascot-row">
+          <div class="mascot-cell">
+            <svg viewBox="0 0 220 250" class="ghost" role="img" aria-label="The wraith mascot">
+              <defs>
+                <linearGradient id="stack-mascot-g" x1="0" y1="0" x2="0.9" y2="1"><stop offset="0" stop-color="#dcb2fa"/><stop offset="0.5" stop-color="#c980f2"/><stop offset="1" stop-color="#ff7edb"/></linearGradient>
+              </defs>
+              <path d="M36 104C36 58 68 24 110 24s74 34 74 80v100q-9-10-18 0t-18 0q-9-10-18 0t-18 0q-9-10-18 0t-18 0q-9-10-18 0t-18 0q-9-10-18 0z" fill="url(#stack-mascot-g)"/>
+              <ellipse cx="88" cy="104" rx="12" ry="15" fill="#14101f"/><ellipse cx="132" cy="104" rx="12" ry="15" fill="#14101f"/><circle cx="92" cy="98" r="4" fill="#fff"/><circle cx="136" cy="98" r="4" fill="#fff"/>
+              <ellipse cx="72" cy="132" rx="10" ry="5.5" fill="#ff4fb0" opacity="0.35"/><ellipse cx="148" cy="132" rx="10" ry="5.5" fill="#ff4fb0" opacity="0.35"/>
+              <path d="M100 134q10 9 20 0" stroke="#14101f" stroke-width="3" fill="none" stroke-linecap="round"/>
+            </svg>
+            <p><b>The mascot.</b> A ghost, for a proxy that sits unseen between an app and the network. Lilac to heliotrope to pink, with a soft shine; it floats and blinks on the home page.</p>
+          </div>
+          <div class="mascot-cell">
+            <div class="icon-set">
+              <svg viewBox="0 0 32 32" aria-label="The wordmark's icon" role="img"><defs><linearGradient id="stack-brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c980f2"/><stop offset="1" stop-color="#ff7edb"/></linearGradient></defs><path d="M16 3C9.9 3 5 7.9 5 14v14l3.7-2.6L12.3 28l3.7-2.6 3.7 2.6 3.6-2.6L27 28V14C27 7.9 22.1 3 16 3z" fill="url(#stack-brand-g)"/><circle cx="12" cy="14" r="2.2" fill="#14101f"/><circle cx="20" cy="14" r="2.2" fill="#14101f"/></svg>
+              <img src="../assets/favicon.svg?v=3" alt="The tab icon" width="48" height="48">
+            </div>
+            <p><b>The icons.</b> The wordmark uses the same ghost in the accent gradient. The browser tab gets a flat <code>#c980f2</code> ghost with cut-out eyes and no background, bright enough that no browser puts a plate behind it.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="motion">
+        <h2>Motion</h2>
+        <ul>
+          <li><strong>The ghost</strong> floats over 4.5 seconds, blinks every few, and its shadow breathes with it; sparks twinkle around it.</li>
+          <li><strong>The live view picture</strong> takes a new row every few seconds, and the selection follows it, as in wraith.</li>
+          <li><strong>The connection diagram</strong> sends packets along its edges.</li>
+          <li><strong>Cards and buttons</strong> lift by a few pixels on hover.</li>
+        </ul>
+        <p>All of it is short and slow, and none of it runs when your system asks for reduced motion.</p>
+      </section>
+    </article>
+  </div>
+</div>
+
+<footer class="site-footer gutter">
+  <div class="container">
+    <span class="sign"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C9.9 3 5 7.9 5 14v14l3.7-2.6L12.3 28l3.7-2.6 3.7 2.6 3.6-2.6L27 28V14C27 7.9 22.1 3 16 3z" fill="currentColor"/><circle cx="12" cy="14" r="2.2" fill="var(--bg)"/><circle cx="20" cy="14" r="2.2" fill="var(--bg)"/></svg> wraith · MIT license</span>
+    <span><a href="../docs/">Docs</a> · <a href="./">Stack</a> · <a href="https://github.com/esuEdu/wraith">GitHub</a> · <a href="https://github.com/esuEdu/wraith/security/policy">Security</a></span>
+  </div>
+</footer>
+
+<script src="../assets/site.js"></script>
+</body>
+</html>
