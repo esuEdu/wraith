@@ -43,6 +43,15 @@ type harEntry struct {
 	Cache           struct{}    `json:"cache"`
 	Timings         harTimings  `json:"timings"`
 	Comment         string      `json:"comment,omitempty"`
+	// WebSocket messages, in the form Chrome's DevTools writes and reads.
+	WebSocketMessages []harWSMessage `json:"_webSocketMessages,omitempty"`
+}
+
+type harWSMessage struct {
+	Type   string  `json:"type"` // send or receive
+	Time   float64 `json:"time"` // seconds since the Unix epoch
+	Opcode int     `json:"opcode"`
+	Data   string  `json:"data"`
 }
 
 type harNV struct {
@@ -88,10 +97,50 @@ type harContent struct {
 	Encoding    string `json:"encoding,omitempty"`
 }
 
+// harTimings are in milliseconds; -1 is HAR's "does not apply".
 type harTimings struct {
+	Blocked float64 `json:"blocked"`
+	DNS     float64 `json:"dns"`
+	Connect float64 `json:"connect"` // includes ssl, as HAR defines it
+	SSL     float64 `json:"ssl"`
 	Send    float64 `json:"send"`
 	Wait    float64 `json:"wait"`
 	Receive float64 `json:"receive"`
+}
+
+func timingsFor(f store.Flow) harTimings {
+	t := f.Timing
+	if !t.Known {
+		return harTimings{Blocked: -1, DNS: -1, Connect: -1, SSL: -1, Wait: millis(f.Duration)}
+	}
+	orNA := func(d time.Duration) float64 {
+		if d <= 0 {
+			return -1
+		}
+		return millis(d)
+	}
+	return harTimings{Blocked: orNA(t.Blocked), DNS: orNA(t.DNS), Connect: orNA(t.Connect + t.TLS), SSL: orNA(t.TLS),
+		Send: millis(t.Send), Wait: millis(t.Wait), Receive: millis(t.Receive)}
+}
+
+func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+
+var wsOpcodes = map[string]int{"text": 1, "binary": 2, "close": 8, "ping": 9, "pong": 10}
+
+func wsMessages(f store.Flow) []harWSMessage {
+	var out []harWSMessage
+	for _, m := range f.Messages {
+		typ := "receive"
+		if m.FromClient {
+			typ = "send"
+		}
+		data, _ := bodyText(m.Data)
+		if m.Op == "binary" {
+			data = base64.StdEncoding.EncodeToString(m.Data)
+		}
+		out = append(out, harWSMessage{Type: typ, Time: float64(m.At.UnixMicro()) / 1e6, Opcode: wsOpcodes[m.Op], Data: data})
+	}
+	return out
 }
 
 // HAR renders the HTTP flows as a HAR 1.2 document; tunnels, which carry no request
@@ -133,7 +182,8 @@ func harEntryFor(f store.Flow, r Redactor) harEntry {
 			Cookies: []harNV{}, Headers: nvs(r.Header(f.RespHeader)), HeadersSize: -1, BodySize: f.RespBody.Size,
 			Content: harContent{Size: f.RespBody.Size, MimeType: f.RespHeader.Get("Content-Type")},
 		},
-		Timings: harTimings{Wait: ms},
+		Timings:           timingsFor(f),
+		WebSocketMessages: wsMessages(f),
 	}
 	var notes []string
 	// HAR holds bodies decoded; the Content-Encoding header stays to say how they were sent.
@@ -170,6 +220,15 @@ func harEntryFor(f store.Flow, r Redactor) harEntry {
 	}
 	if f.Err != "" {
 		notes = append(notes, "error: "+f.Err)
+	}
+	if f.Mock != "" {
+		notes = append(notes, "answered by the mock "+f.Mock)
+	}
+	if f.Throttle != "" {
+		notes = append(notes, "throttled: "+f.Throttle)
+	}
+	if f.MessagesDropped > 0 {
+		notes = append(notes, fmt.Sprintf("%d older WebSocket messages not kept", f.MessagesDropped))
 	}
 	e.Comment = strings.Join(notes, "; ")
 	return e

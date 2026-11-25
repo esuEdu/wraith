@@ -44,6 +44,7 @@ type liveState struct {
 	simApps     func() ([]source.SimApp, error)
 	devs        *devices // nil without --device
 	srv         *proxy.Server
+	mocks       *mocks
 
 	src       atomic.Pointer[source.Source]
 	noDecrypt atomic.Pointer[[]string]
@@ -70,6 +71,20 @@ func (l *liveState) decrypt(host string) bool {
 
 // liveActions implements tui.Actions on a liveState.
 type liveActions struct{ *liveState }
+
+func (l liveActions) ToggleMock(f store.Flow) (string, error) { return l.mocks.Toggle(f) }
+func (l liveActions) Mocks() int                              { return l.mocks.Count() }
+func (l liveActions) Throttle() string                        { return l.srv.ThrottleName() }
+
+// SetThrottle switches the slow-network profile for the source's requests from now on.
+func (l liveActions) SetThrottle(name string) error {
+	t, ok := proxy.ThrottleNamed(name)
+	if !ok {
+		return fmt.Errorf("%q must be one of %s", name, strings.Join(config.Throttles, ", "))
+	}
+	l.srv.SetThrottle(t)
+	return nil
+}
 
 func (l liveActions) Source() string { return l.src.Load().String() }
 

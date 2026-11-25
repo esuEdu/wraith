@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/esuEdu/wraith/internal/config"
+	"github.com/esuEdu/wraith/internal/proxy"
 	"github.com/esuEdu/wraith/internal/sim/simtest"
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/store"
@@ -211,5 +212,48 @@ func TestResendFromTheLiveViewIsRecordedAsAReplay(t *testing.T) {
 	<-done
 	if out := e.stdout.String(); !strings.Contains(out, "[replay · sim iPhone 17 · Shop] GET "+ts.URL+"/ping 200") {
 		t.Fatalf("the resent request is not a flow of its own:\n%s", out)
+	}
+}
+
+func TestThrottleProfilesAreTheSameEverywhere(t *testing.T) {
+	names := []string{"off"}
+	for _, p := range proxy.Throttles {
+		names = append(names, p.Name)
+	}
+	cycle := append([]string{"off"}, tui.ThrottleCycle[1:]...)
+	if !slices.Equal(config.Throttles, names) || !slices.Equal(cycle, names) || tui.ThrottleCycle[0] != "" {
+		t.Fatalf("config %v, proxy %v, live view %v", config.Throttles, names, tui.ThrottleCycle)
+	}
+}
+
+func TestStartThrottlesAndTheLiveViewChangesIt(t *testing.T) {
+	e := newEnv(t)
+	var acts tui.Actions
+	d := e.deps()
+	d.OnActions = func(a tui.Actions) { acts = a }
+	done := make(chan int, 1)
+	go func() {
+		done <- Main(t.Context(), []string{"start", "--port", freePort(t), "--no-system-proxy", "--throttle", "edge"}, d)
+	}()
+	<-e.ready
+	if acts.Throttle() != "edge" || !strings.Contains(e.stderr.String(), "throttling the capture source like edge: 400ms latency, 240 kbit/s down, 200 kbit/s up") {
+		t.Fatalf("throttle %q; stderr:\n%s", acts.Throttle(), e.stderr)
+	}
+	if err := acts.SetThrottle("3g"); err != nil || acts.Throttle() != "3g" {
+		t.Fatalf("set 3g: %v %q", err, acts.Throttle())
+	}
+	if err := acts.SetThrottle(""); err != nil || acts.Throttle() != "" {
+		t.Fatalf("off: %v %q", err, acts.Throttle())
+	}
+	if err := acts.SetThrottle("5g"); err == nil {
+		t.Fatal("5g accepted")
+	}
+	if acts.Mocks() != 0 {
+		t.Fatalf("mocks %d", acts.Mocks())
+	}
+	e.sigs <- syscall.SIGTERM
+	<-done
+	if code := e.run("start", "--throttle", "5g"); code != ExitUsage {
+		t.Fatalf("--throttle 5g: exit %d", code)
 	}
 }

@@ -5,6 +5,7 @@ package store
 
 import (
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 )
@@ -35,6 +36,44 @@ type Flow struct {
 	RespHeader http.Header
 	ReqBody    Body
 	RespBody   Body
+
+	Timing   Timing // where the time went, for HTTP flows that reached an upstream
+	Throttle string // the slow-network profile it went through, e.g. "3g"; "" for none
+	Mock     string // the mock rule that answered it instead of the upstream; "" for none
+
+	// A WebSocket (status 101) keeps its messages, newest last, at most MaxMessages;
+	// MessagesDropped counts the older ones let go.
+	Messages        []Message
+	MessagesDropped int
+}
+
+// Timing is where an HTTP flow's time went, as wraith saw it talking to the upstream.
+// Phases that did not happen (a reused connection has no DNS, connect or TLS) are 0.
+type Timing struct {
+	Known   bool          // false for flows that never reached an upstream (mocks, failures)
+	Reused  bool          // an open upstream connection was reused
+	Blocked time.Duration // added by a slow-network profile before the request went out
+	DNS     time.Duration
+	Connect time.Duration // TCP connect, without DNS or TLS
+	TLS     time.Duration
+	Send    time.Duration // writing the request, with its body
+	Wait    time.Duration // until the first byte of the response
+	Receive time.Duration // the rest of the response
+}
+
+// MaxMessages is how many WebSocket messages a flow keeps.
+const MaxMessages = 1000
+
+// Message is one WebSocket message, its payload unmasked and, with permessage-deflate,
+// decompressed.
+type Message struct {
+	At         time.Time
+	FromClient bool   // sent by the app; false for the server's
+	Op         string // text, binary, close, ping or pong
+	Data       []byte // at most the capture limit
+	Size       int64  // payload bytes as sent
+	Truncated  bool
+	Note       string // e.g. "compressed; not decoded"
 }
 
 // Body is a captured body: at most the store's limit, with the full size alongside.
@@ -85,6 +124,27 @@ func (s *Store) Add(f Flow) Flow {
 	}
 	s.mu.Unlock()
 	return f
+}
+
+// Update changes the stored flow with id through fn and hands the result to every
+// subscriber, as Add does; subscribers tell an update by its ID, which they have seen.
+// It reports false when the flow is no longer stored.
+func (s *Store) Update(id uint64, fn func(*Flow)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range slices.Backward(s.flows) {
+		if f.ID == id {
+			fn(f)
+			for ch := range s.subs {
+				select {
+				case ch <- *f:
+				default:
+				}
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // Flows returns the stored flows, oldest first.

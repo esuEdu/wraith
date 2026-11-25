@@ -183,6 +183,18 @@ func (a *app) rootCmd() *cobra.Command {
 	return root
 }
 
+// rate writes bytes per second as bits per second, as networks are measured.
+func rate(bytesPerSec int64) string {
+	bits := bytesPerSec * 8
+	switch {
+	case bits >= 1_000_000:
+		return fmt.Sprintf("%g Mbit/s", float64(bits)/1e6)
+	case bits >= 1000:
+		return fmt.Sprintf("%g kbit/s", float64(bits)/1e3)
+	}
+	return fmt.Sprintf("%d bit/s", bits)
+}
+
 func (a *app) versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -227,6 +239,7 @@ func (a *app) startCmd() *cobra.Command {
 		insecure      []string
 		device        bool
 		allowDevices  []string
+		throttle      string
 	)
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -253,6 +266,9 @@ func (a *app) startCmd() *cobra.Command {
 			}
 			if f.Changed("max-body") {
 				o.MaxBodyBytes = &maxBody
+			}
+			if f.Changed("throttle") {
+				o.Throttle = &throttle
 			}
 			if len(insecure) > 0 && noDecrypt {
 				return fail(ExitUsage, "--insecure-upstream does not apply with --no-decrypt")
@@ -283,6 +299,7 @@ func (a *app) startCmd() *cobra.Command {
 	f.StringArrayVar(&insecure, "insecure-upstream", nil, "do not verify this host's certificate, e.g. a local dev server (repeatable)")
 	f.BoolVar(&device, "device", false, "also take traffic from physical devices on this Wi-Fi, set up by scanning a QR code (source device unless --source is given)")
 	f.StringArrayVar(&allowDevices, "allow-device", nil, "allow this device's IP address without the QR code; implies --device (repeatable)")
+	f.StringVar(&throttle, "throttle", "off", "slow the capture source's network: off, lte, 3g, edge, very-bad (t in the live view)")
 	return cmd
 }
 
@@ -441,6 +458,8 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	}
 	popts.Classify = a.classifier(&live.src, sm, macTrusted)
 	popts.AppFromUserAgent = source.AppFromUserAgent
+	live.mocks = newMocks(h, cfg.Mocks, a.notice)
+	popts.Mock = live.mocks.For
 	popts.Dialer = router
 	popts.Route = func(host string) string { r, _ := router.Route(host); return r }
 	if len(cfg.Bypass) > 0 {
@@ -453,6 +472,13 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
 	live.srv = srv
+	if t, _ := proxy.ThrottleNamed(cfg.Throttle); t.Name != "" {
+		srv.SetThrottle(t)
+		a.info("throttling the capture source like %s: %s latency, %s down, %s up", t.Name, t.Latency, rate(t.Down), rate(t.Up))
+	}
+	if n := live.mocks.Count(); n > 0 {
+		a.info("%d mock(s) in config.yaml answer matching requests instead of their upstream", n)
+	}
 	printed, stopPrinting := (<-chan struct{})(closedChan()), func() {}
 	if !useTUI {
 		printed, stopPrinting = a.printFlows(flows, so.jsonLog, export.NewRedactor(cfg.Export.RedactHeaders))
@@ -746,7 +772,19 @@ func (a *app) printFlows(flows *store.Store, asJSON bool, r export.Redactor) (do
 	d := make(chan struct{})
 	go func() {
 		defer close(d)
+		var last uint64
+		shown := map[uint64]int{} // WebSocket flow → messages printed
 		for f := range ch {
+			if f.ID != 0 && f.ID <= last { // an update: a WebSocket's new messages
+				if !asJSON {
+					for _, m := range f.Messages[min(max(shown[f.ID]-f.MessagesDropped, 0), len(f.Messages)):] {
+						_, _ = fmt.Fprintln(a.d.Stdout, formatMessage(f, m))
+					}
+				}
+				shown[f.ID] = len(f.Messages) + f.MessagesDropped
+				continue
+			}
+			last = f.ID
 			f.URL = r.URL(f.URL) // tokens in query strings stay out of scrollback and log files
 			line := formatFlow(f)
 			if asJSON {

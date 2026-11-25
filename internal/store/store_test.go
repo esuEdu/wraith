@@ -116,3 +116,23 @@ func TestS5_2_BodiesStreamThroughWithoutBeingBuffered(t *testing.T) {
 	}
 	_ = pw.Close()
 }
+
+func TestUpdateChangesAStoredFlowAndTellsSubscribers(t *testing.T) {
+	s := New(10, 100)
+	f := s.Add(Flow{Kind: KindHTTP, Status: 101})
+	ch, stop := s.Subscribe(4)
+	defer stop()
+	if !s.Update(f.ID, func(f *Flow) { f.Messages = append(f.Messages, Message{Op: "text", Data: []byte("hi")}) }) {
+		t.Fatal("not updated")
+	}
+	got := <-ch
+	if got.ID != f.ID || len(got.Messages) != 1 {
+		t.Fatalf("subscriber got %+v", got)
+	}
+	if stored, _ := s.Get(f.ID); len(stored.Messages) != 1 {
+		t.Fatalf("stored %+v", stored)
+	}
+	if s.Update(999, func(*Flow) {}) {
+		t.Fatal("updated a flow that is not stored")
+	}
+}

@@ -123,7 +123,12 @@ func (s *Server) serveDecrypted(c net.Conn, name, target string, v Verdict) {
 		ctx := context.WithValue(context.WithValue(r.Context(), targetKey{}, target), verdictKey{}, s.withApp(v, r.UserAgent()))
 		r = r.WithContext(ctx)
 		host, _, _ := net.SplitHostPort(target)
-		s.tlsRP.ServeHTTP(w, s.beginFlow(r, "https://"+r.Host+r.URL.RequestURI(), host))
+		u := "https://" + r.Host + r.URL.RequestURI()
+		r = s.beginFlow(r, u, host)
+		if s.mock(w, r, u) {
+			return
+		}
+		s.tlsRP.ServeHTTP(w, r)
 	})
 	// net/http serves HTTP/2 itself when the *tls.Conn it accepts negotiated "h2".
 	l := newOneConnListener(tc)
@@ -181,7 +186,7 @@ func (s *Server) newTLSReverseProxy() *httputil.ReverseProxy {
 			pr.Out.Host = pr.In.Host
 			keepForwardedHeaders(pr)
 		},
-		Transport:     rt,
+		Transport:     &throttleTransport{s: s, next: rt},
 		FlushInterval: -1,
 		ErrorLog:      s.http.ErrorLog,
 		ModifyResponse: func(resp *http.Response) error {

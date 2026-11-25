@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/esuEdu/wraith/internal/home"
 )
@@ -232,5 +233,67 @@ func TestNoDecryptListIsWrittenBack(t *testing.T) {
 	cfg, _, err := Load(h)
 	if err != nil || strings.Join(cfg.NoDecrypt, ",") != "*.apple.com,pinned.example.com" || len(cfg.Bypass) != 0 {
 		t.Fatalf("cfg %+v, %v", cfg, err)
+	}
+}
+
+func TestMocksAndThrottleAreValidated(t *testing.T) {
+	cfg, err := Parse([]byte(`throttle: 3g
+mocks:
+  - match: "GET https://api.x.test/v2/*"
+    status: 503
+    headers: {Content-Type: application/json}
+    body: '{"error": "down"}'
+    delay: 1500ms
+  - match: https://api.x.test/a
+    file: a.json
+    off: true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Throttle != "3g" || len(cfg.Mocks) != 2 || cfg.Mocks[0].Delay != 1500*time.Millisecond || !cfg.Mocks[1].Off {
+		t.Fatalf("%+v", cfg)
+	}
+	if m, u := SplitMatch(cfg.Mocks[0].Match); m != "GET" || u != "https://api.x.test/v2/*" {
+		t.Fatalf("split %q %q", m, u)
+	}
+	for _, bad := range []string{
+		"throttle: 5g",
+		"mocks: [{match: api.x.test/a}]",
+		"mocks: [{match: 'get! https://x.test/'}]",
+		"mocks: [{match: 'https://x.test/', status: 999}]",
+		"mocks: [{match: 'https://x.test/', body: a, file: a.json}]",
+		"mocks: [{match: 'https://x.test/', file: ../config.yaml}]",
+		"mocks: [{match: 'https://x.test/', file: /etc/passwd}]",
+		"mocks: [{match: 'https://x.test/', delay: 2h}]",
+		"mocks: [{match: 'https://x.test/', headers: {'bad header': x}}]",
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestMocksAreWrittenBackKeepingTheRest(t *testing.T) {
+	h := openHome(t)
+	if _, _, err := Load(h); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMocks(h, []Mock{{Match: "GET https://x.test/a", Status: 500, Delay: 2 * time.Second, Headers: map[string]string{"Content-Type": "text/plain"}}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := h.ReadFile(FileName)
+	if !strings.Contains(string(b), "delay: 2s") || !strings.Contains(string(b), "# wraith configuration") || !strings.Contains(string(b), "*.apple.com") {
+		t.Fatalf("config.yaml:\n%s", b)
+	}
+	cfg, _, err := Load(h)
+	if err != nil || len(cfg.Mocks) != 1 || cfg.Mocks[0].Delay != 2*time.Second || cfg.Mocks[0].Status != 500 {
+		t.Fatalf("read back %+v %v", cfg.Mocks, err)
+	}
+	if err := WriteMocks(h, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := h.ReadFile(FileName); !strings.Contains(string(b), "mocks: []") {
+		t.Fatalf("emptied:\n%s", b)
 	}
 }

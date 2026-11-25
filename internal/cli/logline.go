@@ -91,3 +91,19 @@ func humanDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
+
+// formatMessage is one WebSocket message of f in the log: its direction, kind and size,
+// never its payload, which may hold tokens (as bodies are never printed either).
+func formatMessage(f store.Flow, m store.Message) string {
+	dir := "↓"
+	if m.FromClient {
+		dir = "↑"
+	}
+	var b strings.Builder
+	b.WriteString(m.At.Format("15:04:05"))
+	if f.Source != "" {
+		b.WriteString(" [" + f.Source + "]")
+	}
+	b.WriteString("   ws " + dir + " " + m.Op + " " + humanSize(m.Size))
+	return b.String()
+}

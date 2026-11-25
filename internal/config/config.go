@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -35,6 +36,71 @@ type Config struct {
 	NoDecrypt []string `yaml:"no_decrypt"`
 	Export    Export   `yaml:"export"`
 	Theme     string   `yaml:"theme"`
+	Throttle  string   `yaml:"throttle"`
+	Mocks     []Mock   `yaml:"mocks"`
+}
+
+// Throttles are the slow-network profiles (the proxy's), and off.
+var Throttles = []string{"off", "lte", "3g", "edge", "very-bad"}
+
+// Mock answers requests that match it instead of their upstream. Match is
+// "[METHOD ]URL", where * stands for anything; a URL without "?" matches any query.
+// The body is Body, or the file File in ~/.wraith/mocks, read on every request so edits
+// apply at once.
+type Mock struct {
+	Match   string            `yaml:"match"`
+	Status  int               `yaml:"status,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
+	Body    string            `yaml:"body,omitempty"`
+	File    string            `yaml:"file,omitempty"`
+	Delay   time.Duration     `yaml:"delay,omitempty"`
+	Off     bool              `yaml:"off,omitempty"`
+}
+
+// MaxMockDelay is the longest a mock may wait before answering.
+const MaxMockDelay = time.Minute
+
+// SplitMatch splits a mock's Match into its method ("" for any) and URL pattern.
+func SplitMatch(match string) (method, url string) {
+	m, u, ok := strings.Cut(strings.TrimSpace(match), " ")
+	if !ok {
+		return "", m
+	}
+	return strings.ToUpper(m), strings.TrimSpace(u)
+}
+
+var (
+	methodRe   = regexp.MustCompile(`^[A-Z]+$`)
+	mockFileRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
+
+func (m Mock) check() error {
+	method, u := SplitMatch(m.Match)
+	var errs []error
+	if method != "" && method != "*" && !methodRe.MatchString(method) {
+		errs = append(errs, fmt.Errorf("match: %q is not a method", method))
+	}
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		errs = append(errs, fmt.Errorf("match: %q must start with http:// or https://", u))
+	}
+	if m.Status != 0 && (m.Status < 100 || m.Status > 599) {
+		errs = append(errs, fmt.Errorf("status: %d is not an HTTP status", m.Status))
+	}
+	for k := range m.Headers {
+		if !headerRe.MatchString(k) {
+			errs = append(errs, fmt.Errorf("headers: %q is not a header name", k))
+		}
+	}
+	if m.Body != "" && m.File != "" {
+		errs = append(errs, errors.New("body and file: give one or the other"))
+	}
+	if m.File != "" && (!mockFileRe.MatchString(m.File) || m.File == "." || m.File == "..") {
+		errs = append(errs, fmt.Errorf("file: %q must be a file name in ~/.wraith/mocks, without a path", m.File))
+	}
+	if m.Delay < 0 || m.Delay > MaxMockDelay {
+		errs = append(errs, fmt.Errorf("delay: %s must be between 0 and %s", m.Delay, MaxMockDelay))
+	}
+	return errors.Join(errs...)
 }
 
 // Themes are the live view's color themes: Rex's Heliotrope Haze, or the terminal's own
@@ -63,6 +129,8 @@ func Default() Config {
 		NoDecrypt: []string{"*.apple.com", "*.icloud.com"},
 		Export:    Export{RedactHeaders: []string{"Authorization", "Cookie", "Set-Cookie", "*token*"}},
 		Theme:     "heliotrope-haze",
+		Throttle:  "off",
+		Mocks:     []Mock{},
 	}
 }
 
@@ -88,6 +156,18 @@ export:
   redact_headers: [Authorization, Cookie, Set-Cookie, "*token*"]
 
 theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for its own palette
+
+throttle: off               # slow network for the capture source: off, lte, 3g, edge, very-bad (t in the live view)
+
+# Mocks answer the capture source's requests instead of their upstream (m in the live
+# view mocks the selected request with its response). The first match wins.
+#   - match: "GET https://api.example.com/v2/cart"   # [METHOD ]URL; * is anything
+#     status: 500
+#     headers: {Content-Type: application/json}
+#     body: '{"error": "boom"}'      # or file: cart.json, in ~/.wraith/mocks
+#     delay: 2s
+#     off: true                     # keep it, but answer from the upstream
+mocks: []
 `
 
 // Parse decodes and validates a config file's content. Keys left out keep their default.
@@ -110,6 +190,9 @@ func Parse(b []byte) (Config, error) {
 	}
 	if cfg.NoDecrypt == nil {
 		cfg.NoDecrypt = []string{}
+	}
+	if cfg.Mocks == nil {
+		cfg.Mocks = []Mock{}
 	}
 	if err := cfg.normalize(); err != nil {
 		return Default(), err
@@ -144,6 +227,7 @@ type Overrides struct {
 	Interface    *string
 	MaxFlows     *int
 	MaxBodyBytes *int64
+	Throttle     *string
 }
 
 // With returns cfg with o applied, validated again (R6.1: flags override the file).
@@ -162,6 +246,9 @@ func (c Config) With(o Overrides) (Config, error) {
 	}
 	if o.MaxBodyBytes != nil {
 		c.Capture.MaxBodyBytes = *o.MaxBodyBytes
+	}
+	if o.Throttle != nil {
+		c.Throttle = *o.Throttle
 	}
 	if err := c.normalize(); err != nil {
 		return c, err
@@ -223,6 +310,14 @@ func (c *Config) normalize() error {
 	}
 	if !slices.Contains(Themes, c.Theme) {
 		bad("theme", "%q must be one of %s", c.Theme, strings.Join(Themes, ", "))
+	}
+	if !slices.Contains(Throttles, c.Throttle) {
+		bad("throttle", "%q must be one of %s", c.Throttle, strings.Join(Throttles, ", "))
+	}
+	for i, m := range c.Mocks {
+		if err := m.check(); err != nil {
+			bad(fmt.Sprintf("mocks[%d]", i), "%v", err)
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -298,10 +393,35 @@ func WriteNoDecrypt(h *home.Home, patterns []string) error {
 	return writeList(h, "no_decrypt", patterns)
 }
 
-// writeList replaces one top-level list in config.yaml, editing the YAML document in
-// place so the rest of the file and its comments stay. patterns must already be
-// normalized. A missing file starts from DefaultYAML.
+// WriteMocks replaces the mocks list in config.yaml.
+func WriteMocks(h *home.Home, mocks []Mock) error {
+	var seq yaml.Node
+	if err := seq.Encode(mocks); err != nil {
+		return err
+	}
+	if len(mocks) == 0 {
+		seq.Style = yaml.FlowStyle
+	}
+	return writeKey(h, "mocks", &seq)
+}
+
+// writeList replaces one top-level list of strings in config.yaml. patterns must
+// already be normalized.
 func writeList(h *home.Home, key string, patterns []string) error {
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	if len(patterns) == 0 {
+		seq.Style = yaml.FlowStyle // key: []
+	}
+	for _, p := range patterns {
+		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: yaml.DoubleQuotedStyle})
+	}
+	return writeKey(h, key, seq)
+}
+
+// writeKey replaces one top-level value in config.yaml, editing the YAML document in
+// place so the rest of the file and its comments stay. A missing file starts from
+// DefaultYAML.
+func writeKey(h *home.Home, key string, value *yaml.Node) error {
 	b, err := h.ReadFile(FileName)
 	if errors.Is(err, fs.ErrNotExist) {
 		b = []byte(DefaultYAML)
@@ -318,25 +438,18 @@ func writeList(h *home.Home, key string, patterns []string) error {
 		}
 	}
 	root := doc.Content[0]
-	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-	if len(patterns) == 0 {
-		seq.Style = yaml.FlowStyle // key: []
-	}
-	for _, p := range patterns {
-		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: yaml.DoubleQuotedStyle})
-	}
 	found := false
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if root.Content[i].Value == key {
 			old := root.Content[i+1]
-			seq.LineComment, seq.HeadComment, seq.FootComment = old.LineComment, old.HeadComment, old.FootComment
-			root.Content[i+1] = seq
+			value.LineComment, value.HeadComment, value.FootComment = old.LineComment, old.HeadComment, old.FootComment
+			root.Content[i+1] = value
 			found = true
 			break
 		}
 	}
 	if !found {
-		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, seq)
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
 	}
 	var out bytes.Buffer
 	enc := yaml.NewEncoder(&out)

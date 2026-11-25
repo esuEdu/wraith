@@ -82,6 +82,15 @@ func (m *Model) header() string {
 	if m.dev.Addr != "" {
 		h += sep + t.muted.Render("devices ") + m.dev.Addr
 	}
+	if th := m.act.Throttle(); th != "" {
+		h += sep + t.warn.Render("throttle "+th)
+	}
+	if n := m.act.Mocks(); n > 0 {
+		h += sep + t.warn.Render(fmt.Sprintf("%d mock", n))
+		if n > 1 {
+			h += t.warn.Render("s")
+		}
+	}
 	if m.filter != "" {
 		h += sep + t.muted.Render("filter ") + t.accentBold.Render(m.filter) + t.dim.Render(fmt.Sprintf(" (%d shown)", len(m.shown)))
 	}
@@ -183,7 +192,7 @@ func (m *Model) footer() string {
 		return s
 	}
 	// Most useful first; on a narrow screen the ones before "q quit" go, from the end.
-	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "r", "resend", "e", "export",
+	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "r", "resend", "m", "mock", "t", "throttle", "e", "export",
 		"b", "bypass", "n", "no-decrypt", "x", "clear", "↑↓", "move", "q", "quit"}
 	if m.dev.Addr != "" {
 		keys = append(keys[:4], append([]string{"d", "device"}, keys[4:]...)...)
@@ -210,9 +219,22 @@ func (m *Model) statusLine() (string, bool) {
 const (
 	tabResponse = iota
 	tabRequest
+	tabTiming
+	tabMessages
 )
 
-var tabNames = [...]string{"Response", "Request"}
+var tabNames = [...]string{"Response", "Request", "Timing", "Messages"}
+
+// tabsOf are the tabs f has: Messages only for a WebSocket.
+func tabsOf(f store.Flow) []int {
+	tabs := []int{tabResponse, tabRequest, tabTiming}
+	if isWebSocket(f) {
+		tabs = append(tabs, tabMessages)
+	}
+	return tabs
+}
+
+func isWebSocket(f store.Flow) bool { return f.Status == 101 || len(f.Messages) > 0 }
 
 // detailTop is the part of the details that does not scroll.
 func (m *Model) detailTop(f store.Flow) []string {
@@ -228,7 +250,14 @@ func (m *Model) detailTop(f store.Flow) []string {
 		code = "no response"
 	}
 	meta := []string{t.status(f.Status).Bold(true).Render(code)}
-	for _, s := range []string{f.Proto, f.Duration.Round(time.Millisecond).String(), "route " + f.Route, f.Source, f.Start.Format("15:04:05.000")} {
+	extra := ""
+	switch {
+	case f.Mock != "":
+		extra = "mocked"
+	case f.Throttle != "":
+		extra = "throttled " + f.Throttle
+	}
+	for _, s := range []string{f.Proto, f.Duration.Round(time.Millisecond).String(), "route " + f.Route, extra, f.Source, f.Start.Format("15:04:05.000")} {
 		if strings.TrimSpace(s) != "" && s != "route " {
 			meta = append(meta, t.muted.Render(s))
 		}
@@ -242,10 +271,14 @@ func (m *Model) detailTop(f store.Flow) []string {
 	}
 	if f.Kind == store.KindHTTP {
 		tabs := " "
-		for i, name := range tabNames {
+		for _, i := range tabsOf(f) {
 			st := t.tabOff
-			if i == m.tab {
+			if i == m.tabOf(f) {
 				st = t.tabOn
+			}
+			name := tabNames[i]
+			if i == tabMessages {
+				name += fmt.Sprintf(" %d", len(f.Messages)+f.MessagesDropped)
 			}
 			tabs += st.Render(" "+name+" ") + " "
 		}
@@ -258,7 +291,8 @@ func (m *Model) detailTop(f store.Flow) []string {
 // width so a large body is decoded and colored once, not on every key.
 func (m *Model) detailLines(f store.Flow) []string {
 	at := m.shown[m.cursor]
-	if m.detail.lines != nil && m.detail.at == at && m.detail.width == m.width && m.detail.tab == m.tab {
+	tab := m.tabOf(f)
+	if m.detail.lines != nil && m.detail.at == at && m.detail.width == m.width && m.detail.tab == tab && m.detail.msgs == len(f.Messages)+f.MessagesDropped {
 		return m.detail.lines
 	}
 	t := m.t
@@ -272,11 +306,16 @@ func (m *Model) detailLines(f store.Flow) []string {
 		w := lipgloss.Width(name) + lipgloss.Width(note) + 4
 		lines = append(lines, " "+t.accentBold.Render(name)+" "+note+" "+t.dim.Render(strings.Repeat("─", max(m.width-w, 0))))
 	}
-	if f.Kind == store.KindTunnel {
+	switch {
+	case f.Kind == store.KindTunnel:
 		lines = append(lines, "", t.muted.Render(" passed through without decrypting: no headers or bodies to show"))
-	} else {
+	case tab == tabTiming:
+		lines = append(lines, m.timingLines(f)...)
+	case tab == tabMessages:
+		lines = append(lines, m.messageLines(f)...)
+	default:
 		h, body := f.RespHeader, f.RespBody
-		if m.tab == tabRequest {
+		if tab == tabRequest {
 			h, body = f.ReqHeader, f.ReqBody
 		}
 		lines = append(lines, "")
@@ -317,7 +356,8 @@ func (m *Model) detailLines(f store.Flow) []string {
 			}
 		}
 	}
-	m.detail.at, m.detail.width, m.detail.tab, m.detail.lines = at, m.width, m.tab, lines
+	m.detail.at, m.detail.width, m.detail.tab, m.detail.lines = at, m.width, tab, lines
+	m.detail.msgs = len(f.Messages) + f.MessagesDropped
 	return lines
 }
 
@@ -357,10 +397,17 @@ func (m *Model) renderDetail(f store.Flow) string {
 	}
 	var h string
 	if f.Kind == store.KindHTTP {
-		other := strings.ToLower(tabNames[1-m.tab])
+		other := strings.ToLower(tabNames[nextTab(f, m.tabOf(f), 1)])
 		sep := t.dim.Render("  │ ")
-		h = t.hints("tab", other) + sep + t.muted.Render("copy") + t.hints("b", "body", "h", "headers", "u", "url", "c", "curl") +
-			sep + t.hints("r", "resend", "esc", "back")[1:]
+		copies := []string{"b", "body", "h", "headers", "u", "url", "c", "curl"}
+		for { // on a narrow screen the copy keys go, from the end, before anything is cut
+			h = t.hints("tab", other) + sep + t.muted.Render("copy") + t.hints(copies...) +
+				sep + t.hints("r", "resend", "m", "mock", "esc", "back")[1:]
+			if lipgloss.Width(h)+lipgloss.Width(where) <= m.width || len(copies) <= 2 {
+				break
+			}
+			copies = copies[:len(copies)-2]
+		}
 	} else {
 		h = t.hints("u", "copy host", "esc", "back")
 	}

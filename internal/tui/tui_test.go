@@ -23,7 +23,17 @@ type fakeActions struct {
 	bypassed, noDecrypt []string
 	exported, cleared   int
 	replayed            []store.Flow
+	mocked              []store.Flow
+	throttle            string
 }
+
+func (f *fakeActions) ToggleMock(fl store.Flow) (string, error) {
+	f.mocked = append(f.mocked, fl)
+	return "mocking " + fl.Method + " " + fl.URL, nil
+}
+func (f *fakeActions) Mocks() int                    { return len(f.mocked) }
+func (f *fakeActions) Throttle() string              { return f.throttle }
+func (f *fakeActions) SetThrottle(name string) error { f.throttle = name; return nil }
 
 func (f *fakeActions) Replay(fl store.Flow) (store.Flow, error) {
 	f.replayed = append(f.replayed, fl)
@@ -652,5 +662,86 @@ func TestTabCompletesTheFilterFromWhatWasCaptured(t *testing.T) {
 	press(m, "backspace")
 	if strings.Contains(screen(m), "nothing captured") {
 		t.Fatal("the note outlived the next key")
+	}
+}
+
+func TestTimingTabShowsTheWaterfall(t *testing.T) {
+	act := &fakeActions{source: "simulator"}
+	f := store.Flow{ID: 1, Kind: store.KindHTTP, Method: "GET", URL: "https://api.test/slow", Status: 200, Duration: 400 * time.Millisecond,
+		Throttle: "3g", Timing: store.Timing{Known: true, Blocked: 100 * time.Millisecond, DNS: 10 * time.Millisecond, Connect: 20 * time.Millisecond,
+			TLS: 30 * time.Millisecond, Send: time.Millisecond, Wait: 200 * time.Millisecond, Receive: 39 * time.Millisecond}}
+	mocked := store.Flow{ID: 2, Kind: store.KindHTTP, Method: "GET", URL: "https://api.test/cart", Status: 503, Route: "mock", Mock: "GET https://api.test/cart"}
+	m := New(act, "127.0.0.1:9090", []store.Flow{f, mocked})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	press(m, "up", "enter", "3")
+	out := screen(m)
+	for _, want := range []string{" Timing ", "total 400ms", "blocked     100ms", "3g latency", "dns          10ms", "tls          30ms",
+		"wait        200ms", "server, to first byte", "receive      39ms", "throttled 3g"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("timing misses %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, " Messages ") {
+		t.Error("a plain request has a Messages tab")
+	}
+	press(m, "tab") // Timing → Response, wrapping around
+	if m.tabOf(f) != tabResponse {
+		t.Fatalf("tab after Timing: %d", m.tab)
+	}
+	press(m, "esc", "down", "enter", "3")
+	if out := screen(m); !strings.Contains(out, "answered by the mock GET https://api.test/cart") || !strings.Contains(out, "mocked") {
+		t.Errorf("a mocked flow's timing:\n%s", out)
+	}
+}
+
+func TestMessagesTabFollowsAWebSocket(t *testing.T) {
+	act := &fakeActions{source: "simulator"}
+	t0 := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	ws := store.Flow{ID: 1, Kind: store.KindHTTP, Method: "GET", URL: "https://chat.test/live", Status: 101}
+	m := New(act, "127.0.0.1:9090", []store.Flow{ws})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	press(m, "enter", "4")
+	if out := screen(m); !strings.Contains(out, " Messages 0 ") || !strings.Contains(out, "none yet") {
+		t.Fatalf("before any message:\n%s", out)
+	}
+	ws.Messages = []store.Message{
+		{At: t0, FromClient: true, Op: "text", Data: []byte(`{"op":"join","room":"cart"}`), Size: 27},
+		{At: t0.Add(time.Second), Op: "binary", Data: []byte{0, 1, 2}, Size: 3},
+		{At: t0.Add(2 * time.Second), Op: "text", Note: "compressed; not decoded", Size: 900},
+		{At: t0.Add(3 * time.Second), Op: "close", Data: append([]byte{0x03, 0xe8}, "bye"...), Size: 5},
+	}
+	ws.MessagesDropped = 2
+	m.Update(FlowMsg(ws)) // the same flow, with messages: an update, not a new row
+	if len(m.flows) != 1 {
+		t.Fatalf("an update added a row: %d flows", len(m.flows))
+	}
+	out := screen(m)
+	for _, want := range []string{" Messages 6 ", "4 · 2 older let go", `12:00:00.000 ↑ text   {"op":"join","room":"cart"}`, "↓ binary 3 B",
+		"compressed; not decoded · 900 B", "↓ close  1000 normal: bye"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("messages miss %q:\n%s", want, out)
+		}
+	}
+	press(m, "esc", "/")
+	typeText(m, "body:room")
+	press(m, "enter")
+	if len(m.shown) != 1 {
+		t.Fatal("body: does not search a WebSocket's messages")
+	}
+}
+
+func TestTCyclesThrottleAndMMocks(t *testing.T) {
+	m, act := newModel()
+	press(m, "t")
+	if act.throttle != "lte" || !strings.Contains(m.status, "like lte") || !strings.Contains(screen(m), "throttle lte") {
+		t.Fatalf("t: %q %q", act.throttle, m.status)
+	}
+	press(m, "t", "t", "t", "t")
+	if act.throttle != "" || !strings.Contains(m.status, "throttle off") || strings.Contains(m.header(), "throttle") {
+		t.Fatalf("t around to off: %q %q", act.throttle, m.status)
+	}
+	press(m, "up", "up", "m") // GET /cart
+	if len(act.mocked) != 1 || act.mocked[0].ID != 1 || !strings.Contains(m.status, "mocking GET https://api.shop.test/cart") || !strings.Contains(screen(m), "1 mock") {
+		t.Fatalf("m: %+v %q", act.mocked, m.status)
 	}
 }

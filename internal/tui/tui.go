@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,7 +35,18 @@ type Actions interface {
 	// Replay sends a captured request again through the proxy's route and returns the
 	// new flow. It may be slow (the upstream answers); the view calls it off the UI loop.
 	Replay(f store.Flow) (store.Flow, error)
+	// ToggleMock answers f's request with its response from now on (a mock in
+	// config.yaml, its body in a file to edit), or stops if it is mocked; it says which.
+	ToggleMock(f store.Flow) (string, error)
+	Mocks() int // mock rules that are on
+	// Throttle is the slow-network profile in use ("" for none); SetThrottle changes it
+	// for requests from now on ("off" or "" for none).
+	Throttle() string
+	SetThrottle(name string) error
 }
+
+// ThrottleCycle is the order t steps through the slow-network profiles.
+var ThrottleCycle = []string{"", "lte", "3g", "edge", "very-bad"}
 
 // replayMsg delivers what Replay did.
 type replayMsg struct {
@@ -99,8 +111,8 @@ type Model struct {
 	detailAt int // first line of the detail view on screen
 	tab      int // tabResponse or tabRequest
 	detail   struct {
-		at, width, tab int // the flow (index into flows), width and tab the lines were built for
-		lines          []string
+		at, width, tab, msgs int // the flow (index into flows), width, tab and message count the lines were built for
+		lines                []string
 	}
 	confirm struct { // r on a request that may change data asks once more
 		id uint64
@@ -149,7 +161,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 	case FlowMsg:
 		if n := len(m.flows); n > 0 && msg.ID != 0 && msg.ID <= m.flows[n-1].ID {
-			break // already in the snapshot the view started with
+			m.updated(store.Flow(msg)) // a flow already shown, e.g. a WebSocket's new message
+			break
 		}
 		m.flows = append(m.flows, store.Flow(msg))
 		m.refilter()
@@ -169,6 +182,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updated replaces a flow already in the list with its newer copy.
+func (m *Model) updated(f store.Flow) {
+	for i := len(m.flows) - 1; i >= 0; i-- {
+		if m.flows[i].ID == f.ID {
+			m.flows[i] = f
+			delete(m.bodies, f.ID)
+			if len(m.terms) > 0 {
+				m.refilter()
+			}
+			return
+		}
+		if m.flows[i].ID < f.ID {
+			return
+		}
+	}
+}
+
 func (m *Model) say(s string) { m.status, m.statusAt = s, time.Now() }
 
 func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -182,12 +212,20 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "esc", "q", "enter", "backspace":
 			m.mode = modeList
-		case "tab", "shift+tab", "left", "right":
-			m.tab, m.detailAt = 1-m.tab, 0
-		case "1":
-			m.tab, m.detailAt = tabResponse, 0
-		case "2":
-			m.tab, m.detailAt = tabRequest, 0
+		case "tab", "right":
+			if f, ok := m.selected(); ok {
+				m.tab, m.detailAt = nextTab(f, m.tabOf(f), 1), 0
+			}
+		case "shift+tab", "left":
+			if f, ok := m.selected(); ok {
+				m.tab, m.detailAt = nextTab(f, m.tabOf(f), -1), 0
+			}
+		case "1", "2", "3", "4":
+			if f, ok := m.selected(); ok {
+				if i := int(key[0] - '1'); i < len(tabsOf(f)) {
+					m.tab, m.detailAt = tabsOf(f)[i], 0
+				}
+			}
 		case "down", "j":
 			m.detailAt++
 		case "up", "k":
@@ -204,6 +242,8 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.copyCurl()
 		case "r":
 			return m, m.replay()
+		case "m":
+			m.toggleMock()
 		case "b":
 			return m, m.copyBody()
 		case "h":
@@ -256,6 +296,10 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.copyCurl()
 	case "r":
 		return m, m.replay()
+	case "m":
+		m.toggleMock()
+	case "t":
+		m.cycleThrottle()
 	case "e":
 		if p, err := m.act.ExportHAR(); err != nil {
 			m.say("export failed: " + err.Error())
@@ -405,6 +449,35 @@ func (m *Model) hostAction(what string, do func(string) error) {
 		return
 	}
 	m.say("added " + host + " to " + what + " (saved to config.yaml; applies to new connections)")
+}
+
+// toggleMock mocks the selected request with its response, or stops mocking it.
+func (m *Model) toggleMock() {
+	f, ok := m.selected()
+	if !ok {
+		return
+	}
+	msg, err := m.act.ToggleMock(f)
+	if err != nil {
+		m.say("mock: " + err.Error())
+		return
+	}
+	m.say(msg)
+}
+
+// cycleThrottle steps to the next slow-network profile.
+func (m *Model) cycleThrottle() {
+	i := slices.Index(ThrottleCycle, m.act.Throttle())
+	next := ThrottleCycle[(i+1)%len(ThrottleCycle)]
+	if err := m.act.SetThrottle(next); err != nil {
+		m.say("throttle: " + err.Error())
+		return
+	}
+	if next == "" {
+		m.say("throttle off: the network is not slowed")
+		return
+	}
+	m.say("throttling the capture source like " + next + " (latency and bandwidth); t for the next profile")
 }
 
 func (m *Model) selected() (store.Flow, bool) {
