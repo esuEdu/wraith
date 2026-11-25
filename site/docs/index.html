@@ -199,12 +199,13 @@ ok    bypass works for api.partner.example over IPv6</pre>
           <tbody>
             <tr><td><kbd>↑</kbd> <kbd>↓</kbd> · <kbd>j</kbd> <kbd>k</kbd></td><td>Move. <kbd>g</kbd> / <kbd>G</kbd> jump to the oldest / newest.</td></tr>
             <tr><td><kbd>Enter</kbd></td><td>Details, with a Response tab and a Request tab, each showing headers and body. <kbd>Tab</kbd> (or <kbd>←</kbd> <kbd>→</kbd>, <kbd>1</kbd> <kbd>2</kbd>) switches tabs. gzip and deflate bodies are decoded and JSON is pretty-printed and colored, for display only; traffic is forwarded as sent. In the details, <kbd>b</kbd> copies the body of the tab on screen (decoded), <kbd>h</kbd> its headers, <kbd>u</kbd> the URL and <kbd>c</kbd> the request as curl; copied headers and URLs are redacted like exports. <kbd>Esc</kbd> goes back.</td></tr>
-            <tr><td><kbd>/</kbd></td><td>Filter: every word must appear in the source, method, URL, status or route. <kbd>Esc</kbd> clears it.</td></tr>
-            <tr><td><kbd>s</kbd></td><td>Pick the capture source for new connections from a list: <code>all</code>, every booted simulator, each booted simulator (with its iOS version and whether it has the CA) and each running Mac app. Type to narrow the list; text that matches nothing is used as typed, e.g. <code>pid:1234</code>.</td></tr>
+            <tr><td><kbd>/</kbd></td><td>Filter. Every term must match: a plain word in the source, method, URL, status or route; <code>body:text</code> inside the request or response body, decoded as the details show it; <code>header:text</code> in any header name or value. Quotes keep a phrase together: <code>body:"user id"</code>. For example <code>api.shop body:A04FBEEB</code>. <kbd>Esc</kbd> clears it.</td></tr>
+            <tr><td><kbd>s</kbd></td><td>Pick the capture source for new connections: <code>all</code>, then a group each for Simulators (every one, or one with its iOS version and whether it has the CA), Mac apps and, with <code>--device</code>, iPhone &amp; iPad. Groups start folded, showing how many they hold; the one with the current source starts open. <kbd>Enter</kbd>, <kbd>→</kbd> or a click opens a group, <kbd>←</kbd> folds it, and a click or <kbd>Enter</kbd> on a source captures it. Typing searches every group at once; text that matches nothing is used as typed, e.g. <code>pid:1234</code>.</td></tr>
             <tr><td><kbd>d</kbd></td><td>With <code>--device</code>: show the QR code and steps to set up an iPhone or iPad again. <kbd>Esc</kbd> goes back to the flows.</td></tr>
             <tr><td><kbd>b</kbd></td><td>Add the selected host to the bypass list (saved and applied at once).</td></tr>
             <tr><td><kbd>n</kbd></td><td>Add the selected host to <code>no_decrypt</code>.</td></tr>
             <tr><td><kbd>c</kbd></td><td>Copy the request as a curl command, secrets redacted.</td></tr>
+            <tr><td><kbd>r</kbd></td><td>Send the selected request again, also from the details: same method, URL, headers and body, through the same route (VPN or bypass), with the upstream certificate verified. The answer is a new row, its source marked <code>replay</code>. A request that may change data (anything but GET, HEAD and OPTIONS) asks for a second <kbd>r</kbd>. A tunnel, or a body cut at <code>capture.max_body_bytes</code>, cannot be sent again.</td></tr>
             <tr><td><kbd>e</kbd></td><td>Export every flow as HAR to <code>wraith-&lt;time&gt;.har</code> in the current folder, redacted.</td></tr>
             <tr><td><kbd>x</kbd></td><td>Clear the list.</td></tr>
             <tr><td><kbd>q</kbd> · Ctrl-C</td><td>Quit and restore the system proxy.</td></tr>
@@ -362,7 +363,7 @@ theme: heliotrope-haze      # live view colors: heliotrope-haze, or terminal for
         <ul>
           <li>macOS only. iPhones and iPads are captured only on the same Wi-Fi as the Mac, with <code>--device</code>; Android devices are not supported.</li>
           <li>Apps that ignore the system proxy are neither captured nor bypassed.</li>
-          <li>wraith shows traffic; it does not edit it (no breakpoints, rewrites or map-local).</li>
+          <li>wraith shows traffic and can send a captured request again as it was; it does not edit traffic (no breakpoints, rewrites or map-local).</li>
           <li>HTTP/3 (QUIC) is not proxied; clients fall back to HTTP/2 or HTTP/1.1 through the proxy.</li>
           <li>Bypass goes out on the physical interface only; SSH or WireGuard routes are not supported.</li>
         </ul>

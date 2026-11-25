@@ -94,7 +94,10 @@ func (fr *flowRec) commit() {
 		f := fr.f
 		f.Duration = time.Since(f.Start)
 		fr.mu.Unlock()
-		fr.s.opts.Store.Add(f)
+		f = fr.s.opts.Store.Add(f)
+		fr.mu.Lock()
+		fr.f = f // as stored, with its ID
+		fr.mu.Unlock()
 	})
 }
 
