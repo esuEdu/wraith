@@ -62,6 +62,8 @@ func press(m *Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		case "tab":
 			msg = tea.KeyPressMsg{Code: tea.KeyTab}
+		case "shift+tab":
+			msg = tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 		default:
 			r := []rune(k)[0]
 			msg = tea.KeyPressMsg{Code: r, Text: k}
@@ -588,5 +590,67 @@ func TestSourcePickerListsAppsUnderTheirSimulator(t *testing.T) {
 	press(m, "down", "enter") // Bank, in the simulator
 	if act.source != "app:Bank" {
 		t.Fatalf("source %q", act.source)
+	}
+}
+
+func TestTabCompletesTheFilterFromWhatWasCaptured(t *testing.T) {
+	m, _ := newModel()
+	m.Update(FlowMsg(store.Flow{ID: 4, Kind: store.KindHTTP, Source: "device 192.168.0.23 · Bank", Method: "GET", URL: "https://api.bank.test/me", Status: 200, Route: "vpn",
+		RespHeader: http.Header{"X-Request-Id": {"7"}, "X-Rate-Limit": {"9"}}}))
+	press(m, "/")
+
+	typeText(m, "pin")
+	press(m, "tab") // one match: filled in, ready for the next word
+	if m.input != "pinned.bank.test " {
+		t.Fatalf("one match: %q", m.input)
+	}
+
+	typeText(m, "api")
+	press(m, "tab") // two hosts agree as far as "api."
+	if m.input != "pinned.bank.test api." || !strings.Contains(screen(m), "api.shop.test") {
+		t.Fatalf("common prefix: %q\n%s", m.input, screen(m))
+	}
+	press(m, "tab", "tab") // then steps through them
+	if m.input != "pinned.bank.test api.shop.test" || !strings.Contains(screen(m), "[api.shop.test]") {
+		t.Fatalf("stepping: %q\n%s", m.input, screen(m))
+	}
+	press(m, "shift+tab")
+	if m.input != "pinned.bank.test api.bank.test" {
+		t.Fatalf("stepping back: %q", m.input)
+	}
+
+	press(m, " ")
+	typeText(m, "Ba")
+	press(m, "tab") // the app part of a source
+	if !strings.HasSuffix(m.input, " Bank ") {
+		t.Fatalf("app: %q", m.input)
+	}
+	typeText(m, "iphone")
+	press(m, "tab") // not a prefix of anything, so what contains it; spaces are quoted
+	if !strings.HasSuffix(m.input, ` "sim iPhone 17 · Shop" `) {
+		t.Fatalf("source: %q", m.input)
+	}
+	typeText(m, "h:x-r")
+	press(m, "tab") // x-rate-limit and x-request-id agree only as far as typed: the first is shown
+	if !strings.HasSuffix(m.input, " h:x-rate-limit") {
+		t.Fatalf("header: %q", m.input)
+	}
+	press(m, "enter")
+	if len(m.shown) != 0 { // no single flow is both bank hosts
+		t.Fatalf("filter %q shows %v", m.filter, m.shown)
+	}
+
+	press(m, "/")
+	for range len(m.input) {
+		press(m, "backspace")
+	}
+	typeText(m, "zzz")
+	press(m, "tab")
+	if m.input != "zzz" || !strings.Contains(screen(m), `nothing captured matches "zzz"`) {
+		t.Fatalf("no match: %q\n%s", m.input, screen(m))
+	}
+	press(m, "backspace")
+	if strings.Contains(screen(m), "nothing captured") {
+		t.Fatal("the note outlived the next key")
 	}
 }

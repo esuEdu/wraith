@@ -173,8 +173,11 @@ func (m *Model) footer() string {
 	t := m.t
 	if m.mode == modeFilter {
 		prompt := t.accentBold.Render(" filter › ") + m.input + t.mark.Render("▏")
+		if m.comp.note != "" {
+			return clip(prompt+"   "+t.muted.Render(m.comp.note), m.width)
+		}
 		help := t.muted.Render("words · body:text · header:text · \"a phrase\"")
-		return clip(prompt+"   "+help+"  "+t.hints("enter", "apply", "esc", "cancel"), m.width)
+		return clip(prompt+"   "+help+"  "+t.hints("tab", "complete", "enter", "apply", "esc", "cancel"), m.width)
 	}
 	if s, ok := m.statusLine(); ok {
 		return s
