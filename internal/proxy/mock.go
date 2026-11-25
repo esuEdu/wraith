@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strconv"
@@ -12,6 +13,17 @@ import (
 // A mock answers a request of the capture source itself, without asking the upstream:
 // to see an error screen, or a feature the backend does not have yet. Options.Mock
 // picks one per request; only decrypted (or plain http) requests can be mocked.
+
+// MockRequest is what a mock is picked by: the method and full URL, the headers, and
+// the body, read only when a rule needs it (a GraphQL operation is in the body).
+type MockRequest struct {
+	Method, URL string
+	Header      http.Header
+	Body        func() []byte
+}
+
+// maxPeek is the most of a request body read to pick a mock; the rest streams on.
+const maxPeek = 1 << 20
 
 // MockResponse is what a mock answers.
 type MockResponse struct {
@@ -29,7 +41,21 @@ func (s *Server) mock(w http.ResponseWriter, r *http.Request, url string) bool {
 	if s.opts.Mock == nil || !verdictOf(r.Context()).InSource {
 		return false
 	}
-	m := s.opts.Mock(r.Method, url)
+	var peeked []byte
+	read := false
+	body := func() []byte { // read once; the request goes on with the same bytes
+		if !read && r.Body != nil && r.Body != http.NoBody {
+			read = true
+			peeked, _ = io.ReadAll(io.LimitReader(r.Body, maxPeek))
+			rest := r.Body
+			r.Body = struct {
+				io.Reader
+				io.Closer
+			}{io.MultiReader(bytes.NewReader(peeked), rest), rest}
+		}
+		return peeked
+	}
+	m := s.opts.Mock(MockRequest{Method: r.Method, URL: url, Header: r.Header, Body: body})
 	if m == nil {
 		return false
 	}

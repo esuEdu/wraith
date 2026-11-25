@@ -12,7 +12,8 @@ import (
 // The filter (/) is a list of terms, all of which must match a flow:
 //   - a plain word matches its summary: source, method, URL, status, route, kind, error;
 //   - body:<text> matches the request or response body, decoded as the details show it;
-//   - header:<text> matches any request or response header name or value.
+//   - header:<text> matches any request or response header name or value;
+//   - op:<name> matches a GraphQL operation, e.g. op:GetCart or op:mutation.
 // "quotes" keep spaces in a term: body:"user id".
 
 type term struct {
@@ -25,7 +26,7 @@ func parseFilter(q string) []term {
 	var terms []term
 	for _, w := range splitQuoted(q) {
 		t := term{text: strings.ToLower(w)}
-		for _, f := range []struct{ prefix, field string }{{"body:", "body"}, {"b:", "body"}, {"header:", "header"}, {"h:", "header"}} {
+		for _, f := range []struct{ prefix, field string }{{"body:", "body"}, {"b:", "body"}, {"header:", "header"}, {"h:", "header"}, {"op:", "op"}} {
 			if rest, ok := strings.CutPrefix(t.text, f.prefix); ok {
 				t = term{field: f.field, text: strings.Trim(rest, `"`)}
 				break
@@ -67,7 +68,8 @@ func (m *Model) matches(f store.Flow) bool {
 	if len(m.terms) == 0 {
 		return true
 	}
-	summary := strings.ToLower(fmt.Sprintf("%s %s %s %d %s %s %s", f.Source, f.Method, f.URL, f.Status, f.Route, f.Kind, f.Err))
+	ops := strings.ToLower(store.GraphQLLabel(f.GraphQL))
+	summary := strings.ToLower(fmt.Sprintf("%s %s %s %d %s %s %s", f.Source, f.Method, f.URL, f.Status, f.Route, f.Kind, f.Err)) + " " + ops
 	for _, t := range m.terms {
 		var hay string
 		switch t.field {
@@ -75,6 +77,8 @@ func (m *Model) matches(f store.Flow) bool {
 			hay = m.bodyIndex(f)
 		case "header":
 			hay = headerText(f.ReqHeader) + "\n" + headerText(f.RespHeader)
+		case "op":
+			hay = ops
 		default:
 			hay = summary
 		}

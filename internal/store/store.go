@@ -41,10 +41,31 @@ type Flow struct {
 	Throttle string // the slow-network profile it went through, e.g. "3g"; "" for none
 	Mock     string // the mock rule that answered it instead of the upstream; "" for none
 
+	GraphQL       []GraphQLOp // the operations of a GraphQL request; nil for anything else
+	GraphQLErrors int         // errors its response reports (GraphQL answers 200 anyway)
+
 	// A WebSocket (status 101) keeps its messages, newest last, at most MaxMessages;
 	// MessagesDropped counts the older ones let go.
 	Messages        []Message
 	MessagesDropped int
+}
+
+// SetGraphQL fills in GraphQL and GraphQLErrors from the flow's request and response.
+func (f *Flow) SetGraphQL() {
+	if f.Kind != KindHTTP {
+		return
+	}
+	req := Decode(f.ReqBody, f.ReqHeader.Get("Content-Encoding"))
+	if req.Partial {
+		return
+	}
+	f.GraphQL = GraphQLOperations(f.Method, f.URL, f.ReqHeader, req.Data)
+	if f.GraphQL != nil {
+		resp := Decode(f.RespBody, f.RespHeader.Get("Content-Encoding"))
+		if !resp.Partial {
+			f.GraphQLErrors = GraphQLErrors(resp.Data)
+		}
+	}
 }
 
 // Timing is where an HTTP flow's time went, as wraith saw it talking to the upstream.

@@ -45,16 +45,18 @@ var Throttles = []string{"off", "lte", "3g", "edge", "very-bad"}
 
 // Mock answers requests that match it instead of their upstream. Match is
 // "[METHOD ]URL", where * stands for anything; a URL without "?" matches any query.
+// Operation narrows it to the GraphQL operation of that name.
 // The body is Body, or the file File in ~/.wraith/mocks, read on every request so edits
 // apply at once.
 type Mock struct {
-	Match   string            `yaml:"match"`
-	Status  int               `yaml:"status,omitempty"`
-	Headers map[string]string `yaml:"headers,omitempty"`
-	Body    string            `yaml:"body,omitempty"`
-	File    string            `yaml:"file,omitempty"`
-	Delay   time.Duration     `yaml:"delay,omitempty"`
-	Off     bool              `yaml:"off,omitempty"`
+	Match     string            `yaml:"match"`
+	Operation string            `yaml:"operation,omitempty"` // a GraphQL operation's name; "" for any request
+	Status    int               `yaml:"status,omitempty"`
+	Headers   map[string]string `yaml:"headers,omitempty"`
+	Body      string            `yaml:"body,omitempty"`
+	File      string            `yaml:"file,omitempty"`
+	Delay     time.Duration     `yaml:"delay,omitempty"`
+	Off       bool              `yaml:"off,omitempty"`
 }
 
 // MaxMockDelay is the longest a mock may wait before answering.
@@ -72,6 +74,7 @@ func SplitMatch(match string) (method, url string) {
 var (
 	methodRe   = regexp.MustCompile(`^[A-Z]+$`)
 	mockFileRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	gqlNameRe  = regexp.MustCompile(`^[_A-Za-z][_0-9A-Za-z]*$`)
 )
 
 func (m Mock) check() error {
@@ -96,6 +99,9 @@ func (m Mock) check() error {
 	}
 	if m.File != "" && (!mockFileRe.MatchString(m.File) || m.File == "." || m.File == "..") {
 		errs = append(errs, fmt.Errorf("file: %q must be a file name in ~/.wraith/mocks, without a path", m.File))
+	}
+	if m.Operation != "" && !gqlNameRe.MatchString(m.Operation) {
+		errs = append(errs, fmt.Errorf("operation: %q is not a GraphQL operation name", m.Operation))
 	}
 	if m.Delay < 0 || m.Delay > MaxMockDelay {
 		errs = append(errs, fmt.Errorf("delay: %s must be between 0 and %s", m.Delay, MaxMockDelay))
@@ -166,6 +172,7 @@ throttle: off               # slow network for the capture source: off, lte, 3g,
 #     headers: {Content-Type: application/json}
 #     body: '{"error": "boom"}'      # or file: cart.json, in ~/.wraith/mocks
 #     delay: 2s
+#     operation: GetCart            # only this GraphQL operation at that URL
 #     off: true                     # keep it, but answer from the upstream
 mocks: []
 `

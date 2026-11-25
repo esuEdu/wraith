@@ -35,6 +35,8 @@ func (m *Model) render() string {
 		}
 	case modeSource:
 		return m.renderPicker()
+	case modeCompare:
+		return m.renderCompare()
 	}
 	t := m.t
 	var b strings.Builder
@@ -97,6 +99,13 @@ func (m *Model) header() string {
 	return clip(h, m.width)
 }
 
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 func (m *Model) rule() string { return m.t.dim.Render(strings.Repeat("─", max(m.width, 1))) }
 
 // row is one flow in the list; the selected one is highlighted across the screen, with
@@ -125,8 +134,20 @@ func (m *Model) row(f store.Flow, sel bool) string {
 		fmt.Sprintf("%-7.7s", f.Method),
 		fmt.Sprintf("%-6.6s", f.Route),
 	}
+	url := f.URL
+	op := ""
+	if len(f.GraphQL) > 0 { // the operation says more than the endpoint
+		url, _, _ = strings.Cut(url, "?")
+		op = "  " + store.GraphQLLabel(f.GraphQL)
+		if f.GraphQLErrors > 0 {
+			op += fmt.Sprintf("  ✗ %d error", f.GraphQLErrors) + plural(f.GraphQLErrors)
+		}
+	}
+	if isWebSocket(f) {
+		op = fmt.Sprintf("  %d message", len(f.Messages)+f.MessagesDropped) + plural(len(f.Messages)+f.MessagesDropped)
+	}
 	if sel {
-		line := strings.Join(append(cols, f.URL), " ")
+		line := strings.Join(append(cols, url), " ") + op
 		if r := tunnelReason(f); r != "" {
 			line += "  " + r
 		}
@@ -134,12 +155,27 @@ func (m *Model) row(f store.Flow, sel bool) string {
 		line += strings.Repeat(" ", max(m.width-1-lipgloss.Width(line), 0))
 		return t.mark.Render("▌") + t.selected.Render(line)
 	}
-	host, rest := splitURL(f.URL)
+	host, rest := splitURL(url)
 	why := ""
 	if r := tunnelReason(f); r != "" {
 		why = "  " + stStyle.Render(r)
 	}
-	line := " " + t.dim.Render(cols[0]) + " " + cols[1] + " " + stStyle.Render(cols[2]) + " " +
+	if op != "" {
+		opStyle := t.accent
+		if isWebSocket(f) {
+			opStyle = t.muted
+		}
+		if name, errs, ok := strings.Cut(op, "  ✗"); ok {
+			why = "  " + opStyle.Render(strings.TrimSpace(name)) + "  " + t.bad.Render("✗"+errs) + why
+		} else {
+			why = "  " + opStyle.Render(strings.TrimSpace(op)) + why
+		}
+	}
+	lead := " "
+	if m.cmp.mark != 0 && m.cmp.mark == f.ID {
+		lead = t.accentBold.Render("◆")
+	}
+	line := lead + t.dim.Render(cols[0]) + " " + cols[1] + " " + stStyle.Render(cols[2]) + " " +
 		t.method(f.Method).Render(cols[3]) + " " + routeStyle.Render(cols[4]) + " " + host + t.muted.Render(rest) + why
 	return clip(line, m.width)
 }
@@ -185,14 +221,14 @@ func (m *Model) footer() string {
 		if m.comp.note != "" {
 			return clip(prompt+"   "+t.muted.Render(m.comp.note), m.width)
 		}
-		help := t.muted.Render("words · body:text · header:text · \"a phrase\"")
+		help := t.muted.Render("words · body:text · header:text · op:name · \"a phrase\"")
 		return clip(prompt+"   "+help+"  "+t.hints("tab", "complete", "enter", "apply", "esc", "cancel"), m.width)
 	}
 	if s, ok := m.statusLine(); ok {
 		return s
 	}
 	// Most useful first; on a narrow screen the ones before "q quit" go, from the end.
-	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "r", "resend", "m", "mock", "t", "throttle", "e", "export",
+	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "r", "resend", "m", "mock", "=", "compare", "t", "throttle", "e", "export",
 		"b", "bypass", "n", "no-decrypt", "x", "clear", "↑↓", "move", "q", "quit"}
 	if m.dev.Addr != "" {
 		keys = append(keys[:4], append([]string{"d", "device"}, keys[4:]...)...)
@@ -256,6 +292,13 @@ func (m *Model) detailTop(f store.Flow) []string {
 		extra = "mocked"
 	case f.Throttle != "":
 		extra = "throttled " + f.Throttle
+	}
+	if len(f.GraphQL) > 0 {
+		gql := " " + t.accentBold.Render("GraphQL") + " " + t.accent.Render(store.GraphQLLabel(f.GraphQL))
+		if f.GraphQLErrors > 0 {
+			gql += "  " + t.bad.Render(fmt.Sprintf("✗ %d error%s in the response", f.GraphQLErrors, plural(f.GraphQLErrors)))
+		}
+		top = append(top, gql)
 	}
 	for _, s := range []string{f.Proto, f.Duration.Round(time.Millisecond).String(), "route " + f.Route, extra, f.Source, f.Start.Format("15:04:05.000")} {
 		if strings.TrimSpace(s) != "" && s != "route " {
@@ -336,6 +379,20 @@ func (m *Model) detailLines(f store.Flow) []string {
 			lines = append(lines, t.muted.Render(" none"))
 		}
 
+		if tab == tabRequest && len(f.GraphQL) > 0 {
+			for _, q := range graphQLParts(f) {
+				lines = append(lines, "")
+				title(q.title, t.muted.Render(q.note))
+				for l := range strings.SplitSeq(q.text, "\n") {
+					l = strings.TrimRight(l, "\r")
+					if q.json {
+						add(4, false, t.jsonSegs(l)...)
+					} else {
+						add(4, false, seg{l, nil})
+					}
+				}
+			}
+		}
 		lines = append(lines, "")
 		d := store.Decode(body, h.Get("Content-Encoding"))
 		text, isJSON, ok := bodyText(d)

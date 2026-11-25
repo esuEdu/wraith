@@ -187,6 +187,7 @@ func (fr *flowRec) commit() {
 			f.Timing = fr.at.timing(f.Start, end)
 		}
 		fr.mu.Unlock()
+		f.SetGraphQL()
 		f = fr.s.opts.Store.Add(f)
 		fr.mu.Lock()
 		fr.f = f // as stored, with its ID

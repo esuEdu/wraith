@@ -112,8 +112,9 @@ func TestMockAnswersWithoutTheUpstream(t *testing.T) {
 		_, _ = io.WriteString(w, "real")
 	})
 	e := startMITM(t, poolOf(ts.Certificate()), func(o *Options) {
-		o.Mock = func(method, url string) *MockResponse {
-			if method == "POST" && strings.HasSuffix(url, "/cart?x=1") {
+		o.Mock = func(r MockRequest) *MockResponse {
+			method, url := r.Method, r.URL
+			if method == "POST" && strings.HasSuffix(url, "/cart?x=1") && string(r.Body()) == `{"sku":7}` {
 				return &MockResponse{Rule: "POST */cart", Status: 503, Header: http.Header{"Content-Type": {"application/json"}},
 					Body: []byte(`{"error":"down"}`), Delay: 50 * time.Millisecond}
 			}
@@ -154,9 +155,54 @@ func TestMocksOnlyAnswerTheSource(t *testing.T) {
 	ts := upstreamServer(t, false, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "real") })
 	e := startMITM(t, poolOf(ts.Certificate()), func(o *Options) {
 		o.Classify = func(context.Context, net.Addr, net.Addr) Verdict { return Verdict{InSource: false} }
-		o.Mock = func(string, string) *MockResponse { return &MockResponse{Body: []byte("mock")} }
+		o.Mock = func(MockRequest) *MockResponse { return &MockResponse{Body: []byte("mock")} }
 	})
 	if _, body, err := get(t, e.client(poolOf(ts.Certificate()), false), ts.URL+"/x"); err != nil || body != "real" {
 		t.Fatalf("outside the source: %q %v", body, err)
+	}
+}
+
+func TestAMockThatReadsTheBodyLeavesItWholeForTheUpstream(t *testing.T) {
+	ts := upstreamServer(t, false, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_, _ = w.Write(b) // echo
+	})
+	var peeked atomic.Int32
+	e := startMITM(t, poolOf(ts.Certificate()), func(o *Options) {
+		o.Mock = func(r MockRequest) *MockResponse {
+			if strings.Contains(string(r.Body()), `"GetCart"`) {
+				return &MockResponse{Body: []byte(`{"data":"mocked"}`)}
+			}
+			peeked.Add(1)
+			return nil
+		}
+	})
+	c := e.client(poolOf(e.ca.Certificate()), false)
+	big := `{"operationName":"GetUser","query":"query GetUser { me }","pad":"` + strings.Repeat("x", 3<<20) + `"}` // past what is peeked
+	resp, err := c.Post(ts.URL+"/graphql", "application/json", strings.NewReader(big))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(got) != big || peeked.Load() != 1 {
+		t.Fatalf("the upstream got %d of %d bytes", len(got), len(big))
+	}
+	resp, err = c.Post(ts.URL+"/graphql", "application/json", strings.NewReader(`{"operationName":"GetCart","query":"query GetCart { cart }"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(got) != `{"data":"mocked"}` {
+		t.Fatalf("GetCart: %q", got)
+	}
+	f := e.waitFlow(t, "mocked GetCart", func(f store.Flow) bool { return f.Route == "mock" })
+	if store.GraphQLLabel(f.GraphQL) != "query GetCart" {
+		t.Fatalf("the mocked flow's operation: %v", f.GraphQL)
+	}
+	user := e.waitFlow(t, "GetUser", func(f store.Flow) bool { return f.Route != "mock" && f.Kind == store.KindHTTP })
+	if user.ReqBody.Size != int64(len(big)) {
+		t.Fatalf("recorded request body %d of %d bytes", user.ReqBody.Size, len(big))
 	}
 }

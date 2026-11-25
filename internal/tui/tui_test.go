@@ -745,3 +745,125 @@ func TestTCyclesThrottleAndMMocks(t *testing.T) {
 		t.Fatalf("m: %+v %q", act.mocked, m.status)
 	}
 }
+
+func gqlFlow(id uint64, op, vars, resp string) store.Flow {
+	f := store.Flow{ID: id, Kind: store.KindHTTP, Method: "POST", URL: "https://api.shop.test/graphql", Status: 200,
+		ReqHeader:  http.Header{"Content-Type": {"application/json"}},
+		ReqBody:    store.Body{Data: []byte(`{"operationName":"` + op + `","query":"query ` + op + `($id: ID!) {\n  cart(id: $id) { total }\n}","variables":` + vars + `}`)},
+		RespHeader: http.Header{"Content-Type": {"application/json"}},
+		RespBody:   store.Body{Data: []byte(resp)}}
+	f.SetGraphQL()
+	return f
+}
+
+func TestGraphQLRowsFilterAndQuery(t *testing.T) {
+	m := New(&fakeActions{source: "simulator"}, "127.0.0.1:9090", []store.Flow{
+		gqlFlow(1, "GetCart", `{"id":"7"}`, `{"data":{"cart":{"total":1}}}`),
+		gqlFlow(2, "GetUser", `{"id":"9"}`, `{"errors":[{"message":"nope"}]}`),
+	})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	out := screen(m)
+	if !strings.Contains(out, "https://api.shop.test/graphql  query GetCart") || !strings.Contains(out, "query GetUser  ✗ 1 error") {
+		t.Fatalf("rows:\n%s", out)
+	}
+	press(m, "/")
+	typeText(m, "op:getc")
+	press(m, "enter")
+	if len(m.shown) != 1 || m.flows[m.shown[0]].ID != 1 {
+		t.Fatalf("op: shows %v", m.shown)
+	}
+	press(m, "esc", "/")
+	typeText(m, "op:Get")
+	press(m, "tab") // completes operation names
+	if m.input != "op:GetCart" && m.input != "op:GetUser" {
+		t.Fatalf("op: completion: %q", m.input)
+	}
+	press(m, "esc", "enter", "2")
+	out = screen(m)
+	for _, want := range []string{"GraphQL query GetUser  ✗ 1 error in the response", " Query query GetUser ", "query GetUser($id: ID!) {", "cart(id: $id) { total }", " Variables ", `"id": "9"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("request tab misses %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestEqualsComparesTwoRequests(t *testing.T) {
+	a := gqlFlow(1, "GetCart", `{"id":"7"}`, `{"data":{"cart":{"total":1,"currency":"BRL"}}}`)
+	b := gqlFlow(2, "GetCart", `{"id":"8"}`, `{"data":{"cart":{"currency":"BRL","total":2}}}`)
+	b.ReqHeader.Set("Authorization", "Bearer x")
+	tun := store.Flow{ID: 3, Kind: store.KindTunnel, Method: "CONNECT", URL: "x.test:443", Status: 200}
+	m := New(&fakeActions{source: "simulator"}, "127.0.0.1:9090", []store.Flow{a, b, tun})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+	press(m, "=")
+	if m.cmp.mark != 0 || !strings.Contains(m.status, "tunnel") {
+		t.Fatalf("a tunnel was marked: %q", m.status)
+	}
+	press(m, "up", "up", "=")
+	if m.cmp.mark != 1 || !strings.Contains(screen(m), "◆") && !strings.Contains(m.status, "marked") {
+		t.Fatalf("mark: %d %q", m.cmp.mark, m.status)
+	}
+	press(m, "down", "=")
+	if m.mode != modeCompare {
+		t.Fatal("= on a second request did not compare")
+	}
+	out := screen(m)
+	for _, want := range []string{" compare ", " A POST https://api.shop.test/graphql", " B POST", "line same", "operation same",
+		"headers 1 line differ", "+ Authorization: Bearer x", "status same"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("compare misses %q:\n%s", want, out)
+		}
+	}
+	diffLine := func(sign, text string) bool { // the JSON keeps its indentation after the sign
+		for l := range strings.SplitSeq(out, "\n") {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(l), sign+" "); ok && strings.TrimSpace(rest) == text {
+				return true
+			}
+		}
+		return false
+	}
+	for _, d := range [][2]string{{"-", `"id": "7"`}, {"+", `"id": "8"`}, {"-", `"total": 1`}, {"+", `"total": 2`}} {
+		if !diffLine(d[0], d[1]) {
+			t.Errorf("compare misses %s %s:\n%s", d[0], d[1], out)
+		}
+	}
+	if diffLine("+", `"currency": "BRL",`) || diffLine("-", `"currency": "BRL",`) {
+		t.Errorf("key order showed as a difference:\n%s", out)
+	}
+	press(m, "s")
+	if out := screen(m); !strings.Contains(out, "- Authorization: Bearer x") {
+		t.Errorf("s did not swap A and B:\n%s", out)
+	}
+	press(m, "esc")
+	if m.mode != modeList || m.cmp.mark != 1 {
+		t.Fatalf("esc: mode %d mark %d", m.mode, m.cmp.mark)
+	}
+	press(m, "up", "=")
+	if m.cmp.mark != 0 {
+		t.Fatal("= on the marked request did not unmark it")
+	}
+}
+
+func TestDiffLinesAndCollapse(t *testing.T) {
+	a := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	b := []string{"a", "b", "c", "D", "e", "f", "g", "h", "i"}
+	var got []string
+	for _, o := range collapse(diffLines(a, b), 1) {
+		got = append(got, string(o.kind)+o.text)
+	}
+	want := []string{"~… 2 same lines", " c", "-d", "+D", " e", "~… 2 same lines", " h", "+i"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+	if ops := diffLines(nil, nil); len(ops) != 0 {
+		t.Fatalf("empty: %v", ops)
+	}
+	// Past maxDiffCells the middle is not matched line by line: A's lines out, B's in.
+	var x, y []string
+	for i := range 3000 {
+		x, y = append(x, fmt.Sprint("a", i)), append(y, fmt.Sprint("b", i))
+	}
+	ops := diffLines(x, y)
+	if len(ops) != 6000 || ops[0].kind != '-' || ops[2999].kind != '-' || ops[3000].kind != '+' {
+		t.Fatalf("big diff: %d ops", len(ops))
+	}
+}
