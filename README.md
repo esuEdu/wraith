@@ -32,7 +32,10 @@ wraith start --device                    # an iPhone or iPad on the same Wi-Fi: 
 wraith bypass add api.partner.example    # this host skips the VPN
 wraith doctor                            # checks the proxy, CA, simulators and bypass
 wraith export --har flows.har            # save flows from the running wraith, secrets redacted
+wraith start --throttle 3g               # slow the captured app's network
 ```
+
+In the live view, `Enter` shows a request's headers, body, timing and, for a WebSocket, its messages; `m` mocks a request with its response (the body goes to a file to edit) and `t` steps through slow-network profiles.
 
 Everything else, including the configuration file and every command, is in the [documentation](https://esuedu.github.io/wraith/docs/).
 

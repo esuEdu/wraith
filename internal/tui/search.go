@@ -116,6 +116,11 @@ func (m *Model) bodyIndex(f store.Flow) string {
 		return strings.ToLower(string(data))
 	}
 	s := text(f.ReqBody, f.ReqHeader) + "\n" + text(f.RespBody, f.RespHeader)
+	for _, msg := range f.Messages { // a WebSocket's messages count as its body
+		if utf8.Valid(msg.Data) {
+			s += "\n" + strings.ToLower(string(msg.Data))
+		}
+	}
 	if f.ID != 0 {
 		m.bodies[f.ID] = s
 	}

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -85,6 +86,10 @@ type Options struct {
 	// AppFromUserAgent names the app from a request's User-Agent, for verdicts with
 	// ByUserAgent; nil names none.
 	AppFromUserAgent func(userAgent string) string
+
+	// Mock picks the mock that answers a request of the source (its method and full
+	// URL) instead of the upstream; nil, or a nil answer, forwards it.
+	Mock func(method, url string) *MockResponse
 }
 
 // Access is how far a device on the network gets (S2.6).
@@ -178,6 +183,10 @@ type Server struct {
 	selfIPs   map[string]bool          // non-loopback addresses we listen on, likewise
 	pinned    map[string]pin           // client and host → its rejections of our certificate
 	now       func() time.Time
+
+	shaper  atomic.Pointer[shaper] // the slow-network profile in use; nil for none
+	closing context.Context        // done once Close is called
+	stop    context.CancelFunc
 }
 
 // New returns a Server with opts, defaults filled in.
@@ -192,6 +201,7 @@ func New(opts Options) *Server {
 		pinned:    map[string]pin{},
 		now:       time.Now,
 	}
+	s.closing, s.stop = context.WithCancel(context.Background())
 	errLog := log.New(logfWriter(opts.Logf), "", 0)
 
 	transport := &http.Transport{
@@ -212,7 +222,7 @@ func New(opts Options) *Server {
 				}
 			}
 		},
-		Transport:     transport,
+		Transport:     &throttleTransport{s: s, next: transport},
 		FlushInterval: -1, // stream responses (SSE, long polls) without buffering
 		ErrorLog:      errLog,
 		ModifyResponse: func(resp *http.Response) error {
@@ -288,6 +298,7 @@ func (s *Server) Serve(ln net.Listener) error {
 
 // Close stops the listeners and closes every open connection, tunnels included.
 func (s *Server) Close() error {
+	s.stop()
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
@@ -332,7 +343,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request loops back to wraith", http.StatusLoopDetected)
 		return
 	}
-	s.rp.ServeHTTP(w, s.beginFlow(r, r.URL.Redacted(), r.URL.Host))
+	u := r.URL.Redacted()
+	r = s.beginFlow(r, u, r.URL.Host)
+	if s.mock(w, r, u) {
+		return
+	}
+	s.rp.ServeHTTP(w, r)
 }
 
 func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +364,10 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sh := s.shaperFor(r.Context())
+	if sh != nil && sleep(r.Context(), sh.Latency) != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.opts.DialTimeout)
 	up, err := s.dialUpstream(ctx, "tcp", target)
 	cancel()
@@ -355,6 +375,9 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) {
 		s.recordTunnel(r.Context(), start, target, http.StatusBadGateway, err.Error())
 		http.Error(w, "cannot reach "+target, http.StatusBadGateway)
 		return
+	}
+	if sh != nil {
+		up = &slowConn{Conn: up, down: sh.down, up: sh.up, ctx: s.closing}
 	}
 	s.trackUpstream(up, true)
 	defer s.trackUpstream(up, false)

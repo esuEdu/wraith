@@ -207,6 +207,7 @@ func (a *app) setCompletions(root *cobra.Command) {
 	start := find("start")
 	flag(start, "source", values(a.completeSources))
 	flag(start, "iface", values(completeIfaces))
+	flag(start, "throttle", values(func(context.Context) []cobra.Completion { return slices.Clone(config.Throttles) }))
 	flag(start, "allow-device", values(func(context.Context) []cobra.Completion { return a.rememberedIPs() }))
 	for _, name := range []string{"port", "max-flows", "max-body", "insecure-upstream"} {
 		flag(start, name, noArgs)

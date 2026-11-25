@@ -208,3 +208,55 @@ func TestRedactorPatterns(t *testing.T) {
 		t.Errorf("URL without secrets changed: %q", got)
 	}
 }
+
+func TestHARHasTheTimingPhasesAndWebSocketMessages(t *testing.T) {
+	t0 := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	flows := []store.Flow{
+		{Kind: store.KindHTTP, Start: t0, Duration: 300 * time.Millisecond, Method: "GET", URL: "https://a.test/", Status: 200, Throttle: "3g",
+			Timing: store.Timing{Known: true, DNS: 10 * time.Millisecond, Connect: 20 * time.Millisecond, TLS: 30 * time.Millisecond,
+				Send: time.Millisecond, Wait: 200 * time.Millisecond, Receive: 39 * time.Millisecond}},
+		{Kind: store.KindHTTP, Start: t0, Duration: 5 * time.Millisecond, Method: "GET", URL: "https://a.test/again", Status: 200,
+			Timing: store.Timing{Known: true, Reused: true, Send: time.Millisecond, Wait: 3 * time.Millisecond, Receive: time.Millisecond}},
+		{Kind: store.KindHTTP, Start: t0, Method: "GET", URL: "wss://a.test/live", Status: 101, MessagesDropped: 1, Messages: []store.Message{
+			{At: t0, FromClient: true, Op: "text", Data: []byte("hi")},
+			{At: t0.Add(time.Second), Op: "binary", Data: []byte{0xff, 0}},
+		}},
+		{Kind: store.KindHTTP, Start: t0, Method: "GET", URL: "https://a.test/cart", Status: 503, Route: "mock", Mock: "GET https://a.test/cart"},
+	}
+	b, err := HAR(flows, NewRedactor(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Log struct {
+			Entries []struct {
+				Timings map[string]float64 `json:"timings"`
+				Comment string             `json:"comment"`
+				WS      []struct {
+					Type   string  `json:"type"`
+					Time   float64 `json:"time"`
+					Opcode int     `json:"opcode"`
+					Data   string  `json:"data"`
+				} `json:"_webSocketMessages"`
+			} `json:"entries"`
+		} `json:"log"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	e := doc.Log.Entries
+	if tm := e[0].Timings; tm["dns"] != 10 || tm["connect"] != 50 || tm["ssl"] != 30 || tm["wait"] != 200 || tm["receive"] != 39 || !strings.Contains(e[0].Comment, "throttled: 3g") {
+		t.Fatalf("first: %v %q", tm, e[0].Comment)
+	}
+	if tm := e[1].Timings; tm["dns"] != -1 || tm["connect"] != -1 || tm["ssl"] != -1 || tm["wait"] != 3 {
+		t.Fatalf("reused connection: %v", tm)
+	}
+	ws := e[2].WS
+	if len(ws) != 2 || ws[0].Type != "send" || ws[0].Opcode != 1 || ws[0].Data != "hi" || ws[0].Time != float64(t0.Unix()) ||
+		ws[1].Type != "receive" || ws[1].Opcode != 2 || ws[1].Data != "/wA=" || !strings.Contains(e[2].Comment, "1 older WebSocket messages not kept") {
+		t.Fatalf("websocket: %+v %q", ws, e[2].Comment)
+	}
+	if !strings.Contains(e[3].Comment, "answered by the mock GET https://a.test/cart") || e[3].Timings["connect"] != -1 {
+		t.Fatalf("mock: %q %v", e[3].Comment, e[3].Timings)
+	}
+}

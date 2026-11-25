@@ -30,7 +30,7 @@ func (m *Model) copyCurl() tea.Cmd {
 
 // part is the headers and body of the tab on screen, and its name.
 func (m *Model) part(f store.Flow) (name string, h http.Header, b store.Body) {
-	if m.tab == tabRequest {
+	if m.tabOf(f) == tabRequest {
 		return "request", f.ReqHeader, f.ReqBody
 	}
 	return "response", f.RespHeader, f.RespBody
