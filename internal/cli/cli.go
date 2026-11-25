@@ -169,6 +169,7 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.AddCommand(a.startCmd(), a.stopCmd(), a.versionCmd(), a.caCmd(), a.bypassCmd(), a.doctorCmd(), a.exportCmd(), a.devicesCmd())
+	a.setCompletions(root)
 	for _, p := range []struct{ name, short, milestone string }{} {
 		root.AddCommand(&cobra.Command{
 			Use:                p.name,

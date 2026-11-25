@@ -94,6 +94,7 @@ type Model struct {
 	terms    []term            // the filter, parsed
 	bodies   map[uint64]string // decoded bodies in lower case, for body: terms
 	input    string            // text being typed for the filter or the source
+	comp     completion        // tab in the filter
 	mode     mode
 	detailAt int // first line of the detail view on screen
 	tab      int // tabResponse or tabRequest
@@ -237,7 +238,7 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mode, m.detailAt = modeDetail, 0
 		}
 	case "/":
-		m.mode, m.input = modeFilter, m.filter
+		m.mode, m.input, m.comp = modeFilter, m.filter, completion{}
 	case "esc":
 		if m.showDev {
 			m.showDev = false
@@ -274,6 +275,15 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // typing handles the filter prompt.
 func (m *Model) typing(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "tab":
+		m.complete(1)
+		return m, nil
+	case "shift+tab":
+		m.complete(-1)
+		return m, nil
+	}
+	m.comp = completion{}
 	switch k.String() {
 	case "esc":
 		m.mode = modeList
