@@ -418,12 +418,13 @@ mocks: []                   # answers instead of the server; see Mocks</pre>
           <li>Is it in the source? The default is <code>simulator</code>; Mac apps need <code>app:&lt;name&gt;</code> or <code>all</code>.</li>
           <li>Does it use the system proxy? Apps that ignore proxy settings bypass wraith completely.</li>
           <li>A web page in the simulator shows as <code>com.apple.WebKit.Networking</code>, not as the app.</li>
+          <li>On macOS 27.2 or later, use wraith 1.5.2 or later. Earlier versions cannot tell which app opened a connection there, so they pass everything through. <code>wraith version</code> shows yours; <code>brew upgrade wraith</code> updates it.</li>
         </ul>
         <h3>A host shows as <code>tunnel</code> instead of being decrypted</h3>
         <p>The row says why after its address: <code>no_decrypt</code>, <code>certificate rejected</code> (the app pins, or a device does not trust the CA yet; tried again after 30 seconds), <code>idle</code>, <code>not TLS</code>, or a Mac app the Mac does not trust the CA for. See <a href="#decryption">When a connection is not decrypted</a>.</p>
         <h3>The simulator does not trust the CA</h3>
         <p>Run <code>wraith ca install</code> with the simulator booted, then restart the app. <code>wraith doctor</code> lists each booted simulator and whether it trusts the CA.</p>
-        <h3>A bypassed host fails</h3>
+        <h3>A bypassed host fails (deprecated bypass)</h3>
         <p>Run <code>wraith doctor --host &lt;host&gt;</code>. If the bypass fails over IPv4 and the host has no IPv6 address, your VPN blocks bypassing for that host.</p>
         <h3>Port 9090 is in use</h3>
         <p>Use another one: <code>wraith start --port 9191</code>, or set <code>port:</code> in the config.</p>
@@ -437,7 +438,7 @@ mocks: []                   # answers instead of the server; see Mocks</pre>
           <li>wraith can answer requests with <a href="#mocks">mocks</a>, but does not edit traffic in flight: no breakpoints, and no rewriting of a real response.</li>
           <li>WebSockets are shown over HTTP/1.1, the way iOS opens them; WebSockets over HTTP/2 are not.</li>
           <li>HTTP/3 (QUIC) is not proxied; clients fall back to HTTP/2 or HTTP/1.1 through the proxy.</li>
-          <li>Bypass goes out on the physical interface only; SSH or WireGuard routes are not supported.</li>
+          <li>The VPN bypass is deprecated and goes away in v2.0.0. It goes out on the physical interface only, so a VPN that enforces its routes blocks it.</li>
         </ul>
       </section>
 

@@ -171,9 +171,9 @@
         </svg>
       </div>
       <div class="flow-notes">
-        <div><h3>Who opened it</h3><p>wraith asks the kernel which process owns the client's socket. A process under <code>launchd_sim</code> belongs to a simulator; a helper inside an <code>.app</code> belongs to that app. A connection from your Wi-Fi is a device you set up.</p></div>
+        <div><h3>Who opened it</h3><p>wraith finds the process that owns the client's socket: from the kernel, or with <code>lsof</code> on macOS 27.2 and later. A process under <code>launchd_sim</code> belongs to a simulator; a helper inside an <code>.app</code> belongs to that app. A connection from your Wi-Fi is a device you set up.</p></div>
         <div><h3>Decrypt or not</h3><p>Inside the source, simulator traffic is decrypted with wraith's own CA. Mac apps are decrypted only if you made the Mac trust it. Pinned apps and hosts on <code>no_decrypt</code> pass through.</p></div>
-        <div><h3>Which route</h3><p>Bypassed hosts use DNS and sockets bound to the physical interface. Everything else takes the normal path, through the VPN if one is up.</p></div>
+        <div><h3>Which route</h3><p>Bypassed hosts use DNS and sockets bound to the physical interface. Everything else takes the normal path, through the VPN if one is up. The bypass is deprecated and goes away in v2.0.0.</p></div>
       </div>
     </div>
   </section>
@@ -185,9 +185,9 @@
       <div class="safety">
         <div><h3>Proxy settings come back</h3><p>Saved before any change, restored on exit, Ctrl-C or a crash. <code>wraith stop</code> always restores them.</p></div>
         <div><h3>The CA stays on your Mac</h3><p>Created here, key mode 0600, never exported. Simulators trust it; the Mac only if you run <code>wraith ca trust --mac</code>.</p></div>
-        <div><h3>Nothing on disk</h3><p>Captured flows live in memory and are gone when wraith stops. Only an export you ask for writes a file.</p></div>
+        <div><h3>Nothing on disk</h3><p>Captured flows live in memory and are gone when wraith stops. Only an export or a mock you ask for writes a file.</p></div>
         <div><h3>Secrets redacted</h3><p>Exports and log lines hide Authorization, cookies and token headers and query parameters by default.</p></div>
-        <div><h3>Fail closed</h3><p>A bypassed host that cannot be reached directly fails. It is never sent through the VPN instead.</p></div>
+        <div><h3>Pinned apps keep working</h3><p>An app that rejects wraith's certificate gets that host passed through, untouched, and is tried again later. Nothing breaks while you inspect.</p></div>
         <div><h3>Local only</h3><p>Listens on 127.0.0.1 and ::1; with <code>--device</code> also on your Wi-Fi address, for the devices you set up only. Verifies every upstream certificate and makes no network calls of its own.</p></div>
       </div>
     </div>
