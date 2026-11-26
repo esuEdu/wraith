@@ -13,13 +13,20 @@ import (
 	"github.com/esuEdu/wraith/internal/route"
 )
 
+// bypassDeprecated is printed wherever the VPN bypass is used: it is removed in v2.0.0,
+// when wraith becomes an inspector only.
+const bypassDeprecated = "the VPN bypass is deprecated and will be removed in wraith v2.0.0; " +
+	"see https://esuedu.github.io/wraith/docs/#bypass"
+
 func (a *app) bypassCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bypass",
-		Short: "Hosts that skip the VPN: add | rm | list",
-		Long: "Bypassed hosts are resolved and dialed on the physical interface (Wi-Fi or\n" +
+		Short: "Hosts that skip the VPN: add | rm | list (deprecated, removed in v2.0.0)",
+		Long: "Deprecated: the VPN bypass will be removed in wraith v2.0.0.\n\n" +
+			"Bypassed hosts are resolved and dialed on the physical interface (Wi-Fi or\n" +
 			"Ethernet) instead of through the VPN, IPv6 first. If that fails, the connection\n" +
 			"fails: it never goes through the VPN instead. Patterns: api.example.com, *.example.com.",
+		PersistentPreRun: func(*cobra.Command, []string) { a.info("warning: %s", bypassDeprecated) },
 	}
 	cmd.AddCommand(
 		&cobra.Command{

@@ -41,6 +41,9 @@ func TestDoctorOnAHealthySetup(t *testing.T) {
 			t.Errorf("missing %q line with %q:\n%s", want.status, want.text, out)
 		}
 	}
+	if strings.Contains(out, "bypass") {
+		t.Errorf("doctor talks about the bypass with nothing to bypass:\n%s", out)
+	}
 }
 
 func TestDoctorFindsProblems(t *testing.T) {
@@ -71,6 +74,9 @@ func TestDoctorFindsProblems(t *testing.T) {
 		if !hasLine(out, "fail", want) {
 			t.Errorf("missing fail line with %q:\n%s", want, out)
 		}
+	}
+	if !hasLine(out, "warn", "bypass: the VPN bypass is deprecated") {
+		t.Errorf("no deprecation line for the bypass list:\n%s", out)
 	}
 	if !hasLine(out, "info", "CA: not created yet") {
 		t.Errorf("no CA line:\n%s", out)

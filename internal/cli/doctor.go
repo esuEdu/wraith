@@ -37,15 +37,16 @@ func (a *app) doctorCmd() *cobra.Command {
 	var host string
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check the system proxy, CA, simulators, interface and bypass",
+		Short: "Check the system proxy, CA, simulators and interface",
 		Long: "Checks what wraith depends on and prints ok, info, warn or fail for each.\n" +
-			"The bypass check dials a test host the normal way and bound to the physical\n" +
-			"interface, for IPv4 and IPv6 separately, so a VPN that blocks one shows.\n" +
+			"With a bypass list (deprecated, removed in v2.0.0) or --host, it also dials a test\n" +
+			"host the normal way and bound to the physical interface, for IPv4 and IPv6\n" +
+			"separately, so a VPN that blocks one shows.\n" +
 			"Exits 3 if any check fails.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return a.doctor(cmd.Context(), host) },
 	}
-	cmd.Flags().StringVar(&host, "host", "", "test host for the bypass check (default: the first exact host on the bypass list, else example.com)")
+	cmd.Flags().StringVar(&host, "host", "", "test host for the bypass check, run even with an empty bypass list (deprecated, removed in v2.0.0)")
 	return cmd
 }
 
@@ -173,16 +174,20 @@ func (a *app) doctorCA(ctx context.Context, r *report, h *home.Home) {
 }
 
 func (a *app) doctorBypass(ctx context.Context, r *report, cfg config.Config, host string) {
+	checking := len(cfg.Bypass) > 0 || host != ""
+	if checking {
+		r.line("warn", "bypass: %s", bypassDeprecated)
+	}
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	router := route.New(rctx, a.d.Runner, cfg.Bypass, cfg.Interface)
 	cancel()
 	ifi, err := router.Iface()
 	if err != nil {
-		status := "warn"
+		status, what := "warn", "--device"
 		if len(cfg.Bypass) > 0 {
-			status = "fail"
+			status, what = "fail", "--device and bypassed hosts"
 		}
-		r.line(status, "interface: %v; bypassed hosts cannot work, so the bypass check is skipped", err)
+		r.line(status, "interface: %v; %s cannot work", err, what)
 		return
 	}
 	addrs := make([]string, 0, len(ifi.Addrs))
@@ -191,6 +196,9 @@ func (a *app) doctorBypass(ctx context.Context, r *report, cfg config.Config, ho
 	}
 	r.line("ok", "interface: %s (%s)", ifi.Name, strings.Join(addrs, ", "))
 
+	if !checking {
+		return // nothing to bypass: no test dials
+	}
 	if host == "" {
 		host = "example.com"
 		for _, p := range cfg.Bypass {

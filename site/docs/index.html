@@ -44,7 +44,7 @@
           <li><a href="#sources">Capture sources</a></li>
           <li><a href="#devices">iPhone and iPad</a></li>
           <li><a href="#decryption">HTTPS and the CA</a></li>
-          <li><a href="#bypass">VPN bypass</a></li>
+          <li><a href="#bypass">VPN bypass (deprecated)</a></li>
           <li><a href="#live-view">Live view</a></li>
           <li><a href="#log">Log mode and JSON</a></li>
           <li><a href="#graphql">GraphQL</a></li>
@@ -72,7 +72,7 @@
         <p>wraith is a proxy you run from the terminal. While it runs, it is your Mac's HTTP and HTTPS proxy, and it does two things:</p>
         <ul>
           <li><strong>Inspect.</strong> It decrypts and shows traffic from one <a href="#sources">capture source</a>: the iOS Simulator, one Mac app, one process, or everything. Traffic from anything else passes through untouched: never decrypted, stored or shown.</li>
-          <li><strong>Route.</strong> Hosts on the <a href="#bypass">bypass list</a> are resolved and connected on the physical interface (Wi-Fi or Ethernet) instead of the VPN.</li>
+          <li><strong>Route</strong> (deprecated, removed in v2.0.0). Hosts on the <a href="#bypass">bypass list</a> are resolved and connected on the physical interface (Wi-Fi or Ethernet) instead of the VPN.</li>
         </ul>
         <p>Requirements: macOS 13 or later on Apple Silicon or Intel. Xcode with at least one iOS simulator to capture simulator traffic.</p>
         <p>wraith keeps its files in <code>~/.wraith</code>. Set <code>WRAITH_HOME</code> to use another folder, for example a throwaway one for testing.</p>
@@ -179,7 +179,8 @@ wraith ca untrust --mac    # undo</pre>
       </section>
 
       <section id="bypass">
-        <h2>VPN bypass</h2>
+        <h2>VPN bypass (deprecated)</h2>
+        <div class="callout"><p><strong>Deprecated in v1.6, removed in v2.0.0.</strong> wraith is becoming an inspector only. A bypass bound to Wi-Fi or Ethernet cannot get past VPNs that enforce their routes, and on some it works only because IPv6 is not tunnelled. Until v2.0.0 it works as described here, and <code>wraith bypass</code>, <code>wraith start</code> and <code>wraith doctor</code> warn while a bypass list is set. From v2.0.0 a leftover <code>bypass:</code> list in the config is ignored, with a warning.</p></div>
         <p>Hosts on the bypass list skip the VPN. wraith resolves them with DNS sent over the physical interface (its own DHCP resolver first, then public resolvers; never the VPN's DNS), then connects with sockets bound to that interface: IPv6 addresses first, IPv4 next. macOS keeps a route for the interface even while a VPN owns the default one.</p>
         <pre class="block">wraith bypass add api.partner.example '*.corp.example.com'
 wraith bypass list
@@ -211,7 +212,7 @@ ok    bypass works for api.partner.example over IPv6</pre>
             <tr><td><kbd>/</kbd></td><td>Filter. Every term must match: a plain word in the source, method, URL, status or route; <code>body:text</code> inside the request or response body, decoded as the details show it; <code>header:text</code> in any header name or value; <code>op:name</code> a GraphQL operation (<code>op:GetCart</code>, or <code>op:mutation</code>). Quotes keep a phrase together: <code>body:"user id"</code>. For example <code>api.shop body:A04FBEEB</code>. <kbd>Tab</kbd> completes the word you are typing from what has been captured (hosts, sources and apps, methods, statuses, header names after <code>header:</code>, and GraphQL operations after <code>op:</code>); with several matches it lists them, and each <kbd>Tab</kbd> steps to the next. <kbd>Esc</kbd> clears it.</td></tr>
             <tr><td><kbd>s</kbd></td><td>Pick the capture source for new connections: <code>all</code>, then a group each for Simulators (every one, or one with its iOS version and whether it has the CA, with the apps running in it listed under it), Mac apps and, with <code>--device</code>, iPhone &amp; iPad. Groups start folded, showing how many they hold; the one with the current source starts open. <kbd>Enter</kbd>, <kbd>→</kbd> or a click opens a group, <kbd>←</kbd> folds it, and a click or <kbd>Enter</kbd> on a source captures it. Typing searches every group at once; text that matches nothing is used as typed, e.g. <code>pid:1234</code>.</td></tr>
             <tr><td><kbd>d</kbd></td><td>With <code>--device</code>: show the QR code and steps to set up an iPhone or iPad again. <kbd>Esc</kbd> goes back to the flows.</td></tr>
-            <tr><td><kbd>b</kbd></td><td>Add the selected host to the bypass list (saved and applied at once).</td></tr>
+            <tr><td><kbd>b</kbd></td><td>Deprecated, removed in v2.0.0: add the selected host to the bypass list (saved and applied at once).</td></tr>
             <tr><td><kbd>n</kbd></td><td>Add the selected host to <code>no_decrypt</code>.</td></tr>
             <tr><td><kbd>c</kbd></td><td>Copy the request as a curl command, secrets redacted.</td></tr>
             <tr><td><kbd>r</kbd></td><td>Send the selected request again, also from the details: same method, URL, headers and body, through the same route (VPN or bypass), with the upstream certificate verified. The answer is a new row, its source marked <code>replay</code>. A request that may change data (anything but GET, HEAD and OPTIONS) asks for a second <kbd>r</kbd>. A tunnel, or a body cut at <code>capture.max_body_bytes</code>, cannot be sent again.</td></tr>
@@ -303,13 +304,13 @@ ok    bypass works for api.partner.example over IPv6</pre>
         <p><code>~/.wraith/config.yaml</code> is created with these defaults on first run. Command-line flags override it. Unknown keys and invalid values are refused when wraith starts.</p>
         <pre class="block">port: 9090                  # proxy port on 127.0.0.1 and ::1
 source: simulator           # all | simulator | simulator:&lt;udid|name&gt; | app:&lt;name|bundle-id&gt; | pid:&lt;pid&gt;
-interface: auto             # physical interface for bypassed hosts: auto, or en0, en1, ...
+interface: auto             # physical interface for --device and bypassed hosts: auto, or en0, en1, ...
 
 capture:
   max_flows: 5000           # flows kept in memory
   max_body_bytes: 1048576   # bodies above this are truncated
 
-bypass: []                  # hosts that skip the VPN, e.g. ["*.example.com", "api.partner.io"]
+bypass: []                  # deprecated: hosts that skip the VPN, e.g. ["*.example.com", "api.partner.io"]
 
 no_decrypt:                 # always passed through, never decrypted
   - "*.apple.com"
@@ -353,7 +354,7 @@ mocks: []                   # answers instead of the server; see Mocks</pre>
             <tr><td><code>--allow-device &lt;ip&gt;</code></td><td></td><td>Allow this device without the QR code; implies <code>--device</code> (repeatable).</td></tr>
             <tr><td><code>--insecure-upstream &lt;host&gt;</code></td><td></td><td>Do not verify this host's certificate (repeatable). For local dev servers.</td></tr>
             <tr><td><code>--throttle</code></td><td><code>off</code></td><td>Slow the capture source's network: <code>lte</code>, <code>3g</code>, <code>edge</code> or <code>very-bad</code>. See <a href="#slow-network">Slow network</a>.</td></tr>
-            <tr><td><code>--iface</code></td><td><code>auto</code></td><td>Physical interface for bypassed hosts.</td></tr>
+            <tr><td><code>--iface</code></td><td><code>auto</code></td><td>Physical interface for <code>--device</code> and bypassed hosts.</td></tr>
             <tr><td><code>--log</code></td><td></td><td>One line per flow instead of the live view.</td></tr>
             <tr><td><code>--json</code></td><td></td><td>With <code>--log</code>: one JSON object per line.</td></tr>
             <tr><td><code>--max-flows</code></td><td><code>5000</code></td><td>Flows kept in memory.</td></tr>
@@ -365,12 +366,12 @@ mocks: []                   # answers instead of the server; see Mocks</pre>
           <thead><tr><th>Command</th><th>Does</th></tr></thead>
           <tbody>
             <tr><td><code>wraith stop</code></td><td>Stop a running wraith, or restore settings a crash left behind. Safe to run any time.</td></tr>
-            <tr><td><code>wraith doctor [--host h]</code></td><td>Check config, instance, system proxy, CA, Mac trust, simulators, interface and bypass.</td></tr>
+            <tr><td><code>wraith doctor [--host h]</code></td><td>Check config, instance, system proxy, CA, Mac trust, simulators and interface; with a bypass list or <code>--host</code> (deprecated), the bypass too.</td></tr>
             <tr><td><code>wraith devices list</code></td><td>Show the iPhones and iPads remembered by <code>wraith start --device</code>.</td></tr>
             <tr><td><code>wraith devices forget &lt;ip|all&gt;…</code></td><td>Forget devices; they need the QR code again. Stop wraith first.</td></tr>
-            <tr><td><code>wraith bypass add &lt;host&gt;…</code></td><td>Add hosts or <code>*.domain</code> patterns to the bypass list.</td></tr>
-            <tr><td><code>wraith bypass rm &lt;host&gt;…</code></td><td>Remove entries.</td></tr>
-            <tr><td><code>wraith bypass list</code></td><td>Show the list and the interface it uses.</td></tr>
+            <tr><td><code>wraith bypass add &lt;host&gt;…</code></td><td>Deprecated. Add hosts or <code>*.domain</code> patterns to the bypass list.</td></tr>
+            <tr><td><code>wraith bypass rm &lt;host&gt;…</code></td><td>Deprecated. Remove entries.</td></tr>
+            <tr><td><code>wraith bypass list</code></td><td>Deprecated. Show the list and the interface it uses.</td></tr>
             <tr><td><code>wraith ca install [--sim UDID]</code></td><td>Install the CA into booted simulators, or one.</td></tr>
             <tr><td><code>wraith ca remove</code></td><td>Remove the CA from every simulator.</td></tr>
             <tr><td><code>wraith ca trust --mac [--yes]</code></td><td>Make the Mac trust the CA (asks first).</td></tr>
@@ -417,12 +418,13 @@ mocks: []                   # answers instead of the server; see Mocks</pre>
           <li>Is it in the source? The default is <code>simulator</code>; Mac apps need <code>app:&lt;name&gt;</code> or <code>all</code>.</li>
           <li>Does it use the system proxy? Apps that ignore proxy settings bypass wraith completely.</li>
           <li>A web page in the simulator shows as <code>com.apple.WebKit.Networking</code>, not as the app.</li>
+          <li>On macOS 27.2 or later, use wraith 1.5.2 or later. Earlier versions cannot tell which app opened a connection there, so they pass everything through. <code>wraith version</code> shows yours; <code>brew upgrade wraith</code> updates it.</li>
         </ul>
         <h3>A host shows as <code>tunnel</code> instead of being decrypted</h3>
         <p>The row says why after its address: <code>no_decrypt</code>, <code>certificate rejected</code> (the app pins, or a device does not trust the CA yet; tried again after 30 seconds), <code>idle</code>, <code>not TLS</code>, or a Mac app the Mac does not trust the CA for. See <a href="#decryption">When a connection is not decrypted</a>.</p>
         <h3>The simulator does not trust the CA</h3>
         <p>Run <code>wraith ca install</code> with the simulator booted, then restart the app. <code>wraith doctor</code> lists each booted simulator and whether it trusts the CA.</p>
-        <h3>A bypassed host fails</h3>
+        <h3>A bypassed host fails (deprecated bypass)</h3>
         <p>Run <code>wraith doctor --host &lt;host&gt;</code>. If the bypass fails over IPv4 and the host has no IPv6 address, your VPN blocks bypassing for that host.</p>
         <h3>Port 9090 is in use</h3>
         <p>Use another one: <code>wraith start --port 9191</code>, or set <code>port:</code> in the config.</p>
@@ -436,7 +438,7 @@ mocks: []                   # answers instead of the server; see Mocks</pre>
           <li>wraith can answer requests with <a href="#mocks">mocks</a>, but does not edit traffic in flight: no breakpoints, and no rewriting of a real response.</li>
           <li>WebSockets are shown over HTTP/1.1, the way iOS opens them; WebSockets over HTTP/2 are not.</li>
           <li>HTTP/3 (QUIC) is not proxied; clients fall back to HTTP/2 or HTTP/1.1 through the proxy.</li>
-          <li>Bypass goes out on the physical interface only; SSH or WireGuard routes are not supported.</li>
+          <li>The VPN bypass is deprecated and goes away in v2.0.0. It goes out on the physical interface only, so a VPN that enforces its routes blocks it.</li>
         </ul>
       </section>
 

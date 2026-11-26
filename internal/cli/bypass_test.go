@@ -48,6 +48,26 @@ func TestR6_2_BypassCommandsEditTheConfigFile(t *testing.T) {
 	}
 }
 
+func TestBypassIsDeprecated(t *testing.T) {
+	e := newEnv(t)
+	if code := e.run("bypass", "list"); code != ExitOK {
+		t.Fatalf("list: exit %d", code)
+	}
+	if !strings.Contains(e.stderr.String(), "warning: the VPN bypass is deprecated and will be removed in wraith v2.0.0") {
+		t.Fatalf("bypass list does not warn: %q", e.stderr)
+	}
+	if code := e.run("bypass", "add", "api.partner.io"); code != ExitOK {
+		t.Fatalf("add: exit %d", code)
+	}
+	e.stderr = &syncBuffer{}
+	_, done := e.startAsync("--port", freePort(t), "--no-system-proxy")
+	e.sigs <- syscall.SIGTERM
+	waitExit(t, done)
+	if !strings.Contains(e.stderr.String(), "warning: config.yaml has a bypass list: the VPN bypass is deprecated") {
+		t.Fatalf("start with a bypass list does not warn: %q", e.stderr)
+	}
+}
+
 func TestR3_3_BypassAppliesToEveryConnectionAndFailsClosed(t *testing.T) {
 	ts, upstreamRoots := upstreamTLS(t)
 	_, port, _ := strings.Cut(strings.TrimPrefix(ts.URL, "https://127.0.0.1"), ":")
