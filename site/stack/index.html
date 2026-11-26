@@ -98,7 +98,7 @@
             <tr><td><code>security</code></td><td>Trust the CA on the Mac, only when you ask</td></tr>
             <tr><td><code>ps</code> · <code>lsof</code></td><td>Name the app behind a connection</td></tr>
             <tr><td><code>plutil</code></td><td>An app's bundle id, for <code>app:com.example.shop</code></td></tr>
-            <tr><td><code>route</code> · <code>ipconfig</code></td><td>The physical interface's route and DNS server, for the VPN bypass</td></tr>
+            <tr><td><code>route</code></td><td>The Wi-Fi or Ethernet interface's own default route, for <code>--device</code></td></tr>
             <tr><td><code>socketfilterfw</code></td><td>Whether the firewall would keep an iPhone out (read only)</td></tr>
           </tbody>
         </table></div>
@@ -112,7 +112,7 @@
             <span class="arch-label">Capture</span>
             <div class="pkg"><b>proxy</b><span>CONNECT tunnels, decryption, mocks, throttling, WebSocket tap</span></div>
             <div class="pkg"><b>source</b><span>which process, simulator or device connected</span></div>
-            <div class="pkg"><b>route</b><span>VPN or the physical interface, IPv6 first</span></div>
+            <div class="pkg"><b>netif</b><span>The Wi-Fi or Ethernet interface, for --device</span></div>
             <div class="pkg"><b>store</b><span>flows in memory, GraphQL operations, decoding</span></div>
           </div>
           <div class="arch-row">
@@ -152,7 +152,7 @@
         <div class="cards">
           <div class="card"><h3>The terminal first</h3><p>Everything happens in the terminal. The site draws the live view as it really looks, row for row, rather than inventing a screenshot.</p></div>
           <div class="card"><h3>One accent</h3><p>Heliotrope violet marks what you can act on: keys, the selected tab, the badge. Pink is kept for the selection bar and highlights.</p></div>
-          <div class="card"><h3>Color carries meaning</h3><p>Green is a 2xx, yellow a 4xx, red a 5xx or an error, cyan a bypassed route. Nothing is colored only to decorate.</p></div>
+          <div class="card"><h3>Color carries meaning</h3><p>Green is a 2xx, yellow a 4xx, red a 5xx or an error, cyan a mocked request. Nothing is colored only to decorate.</p></div>
           <div class="card"><h3>Calm by default</h3><p>Secondary text is soft, rules are dim, and motion is slow and small. All of it stops when you ask for less motion.</p></div>
         </div>
       </section>
@@ -174,7 +174,7 @@
           <div class="swatch"><span class="chip" style="--c:#fdca6a"></span><b>yellow</b><code>#fdca6a</code><small>4xx, PUT, numbers</small></div>
           <div class="swatch"><span class="chip" style="--c:#f66e93"></span><b>red</b><code>#f66e93</code><small>5xx, errors, DELETE</small></div>
           <div class="swatch"><span class="chip" style="--c:#7a9bf5"></span><b>blue</b><code>#7a9bf5</code><small>GET, header names, keys</small></div>
-          <div class="swatch"><span class="chip" style="--c:#5fd0e5"></span><b>cyan</b><code>#5fd0e5</code><small>the direct route</small></div>
+          <div class="swatch"><span class="chip" style="--c:#5fd0e5"></span><b>cyan</b><code>#5fd0e5</code><small>a mocked request</small></div>
         </div>
         <h3>The site's tokens</h3>
         <p>The pages follow your system's light or dark setting. Each token has both values; the gradient runs from the accent to the second accent.</p>
@@ -202,12 +202,12 @@
         <figure class="terminal">
           <div class="chrome" aria-hidden="true"><i></i><i></i><i></i></div>
 <pre><span class="t-badge"> wraith </span> <span class="t-soft">127.0.0.1:9090</span><span class="t-dim"> · </span><span class="t-soft">capturing </span><span class="t-acc"><b>iPhone 17</b></span><span class="t-dim"> · </span><span class="t-warn">throttle 3g</span>
- <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/cart</span>
- <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">201</span> <span class="t-post">POST   </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/graphql</span>  <span class="t-acc">mutation AddItem</span>
- <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-post">POST   </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/graphql</span>  <span class="t-acc">query GetUser</span>  <span class="t-bad">✗ 1 error</span>
- <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-mag">direct</span> https://rates.partner.example<span class="t-soft">/today</span>
- <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://cdn.shop.example<span class="t-soft">/img/42.png</span>
- <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-dim">tun</span> <b>CONNECT</b> <span class="t-dim">vpn   </span> gateway.icloud.com:443  <span class="t-dim">no_decrypt</span>
+ <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span>        https://api.shop.example<span class="t-soft">/v2/cart</span>
+ <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">201</span> <span class="t-post">POST   </span>        https://api.shop.example<span class="t-soft">/graphql</span>  <span class="t-acc">mutation AddItem</span>
+ <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-post">POST   </span>        https://api.shop.example<span class="t-soft">/graphql</span>  <span class="t-acc">query GetUser</span>  <span class="t-bad">✗ 1 error</span>
+ <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-mag">mock  </span> https://rates.partner.example<span class="t-soft">/today</span>
+ <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <span class="t-get">GET    </span>        https://cdn.shop.example<span class="t-soft">/img/42.png</span>
+ <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-dim">tun</span> <b>CONNECT</b>        gateway.icloud.com:443  <span class="t-dim">no_decrypt</span>
 <span class="t-mark">▌</span><span class="t-sel">12:04:34 sim iPhone 17 · Shop   503 GET     mock   https://api.shop.example/v2/recs</span>
  <span class="t-acc"><b>↵</b></span> <span class="t-soft">details</span>  <span class="t-acc"><b>m</b></span> <span class="t-soft">mock</span>  <span class="t-acc"><b>=</b></span> <span class="t-soft">compare</span>  <span class="t-acc"><b>t</b></span> <span class="t-soft">throttle</span>  <span class="t-acc"><b>q</b></span> <span class="t-soft">quit</span></pre>
         </figure>
@@ -216,7 +216,7 @@
           <tbody>
             <tr><td>Status</td><td><span class="dot" style="--c:#72e0aa"></span>green 1xx–3xx · <span class="dot" style="--c:#fdca6a"></span>yellow 4xx · <span class="dot" style="--c:#f66e93"></span>red 5xx and errors · <span class="dot" style="--c:#6a5f85"></span>comment for a tunnel</td></tr>
             <tr><td>Method</td><td>bold: <span class="dot" style="--c:#7a9bf5"></span>GET · <span class="dot" style="--c:#72e0aa"></span>POST · <span class="dot" style="--c:#fdca6a"></span>PUT and PATCH · <span class="dot" style="--c:#f66e93"></span>DELETE</td></tr>
-            <tr><td>Route</td><td><span class="dot" style="--c:#6a5f85"></span>vpn and mock dim · <span class="dot" style="--c:#5fd0e5"></span>direct in cyan · <span class="dot" style="--c:#f66e93"></span>failed in red</td></tr>
+            <tr><td>Via</td><td><span class="dot" style="--c:#5fd0e5"></span>mock in cyan · <span class="dot" style="--c:#6a5f85"></span>a slow-network profile dim</td></tr>
             <tr><td>URL</td><td>the host in the text color, the path <span class="dot" style="--c:#b6abd0"></span>soft</td></tr>
             <tr><td>GraphQL</td><td>the operation in <span class="dot" style="--c:#c980f2"></span>heliotrope, errors in <span class="dot" style="--c:#f66e93"></span>red</td></tr>
             <tr><td>Selection</td><td>a <span class="dot" style="--c:#ff7edb"></span>pink bar, the row on <span class="dot" style="--c:#3a2b5c"></span>surface</td></tr>
@@ -243,7 +243,7 @@
           <div class="specimen"><p class="spec-name">Buttons</p><p class="actions"><a class="button primary" href="../docs/#quick-start">Quick start</a> <a class="button" href="../docs/">Read the docs</a></p></div>
           <div class="specimen"><p class="spec-name">Command</p><div class="install"><code><span class="prompt">$ </span>brew install esuEdu/tap/wraith</code><button class="copy" type="button" data-copy="brew install esuEdu/tap/wraith">Copy</button></div></div>
           <div class="specimen"><p class="spec-name">Keys and code</p><p>Press <kbd>m</kbd> to mock, <kbd>t</kbd> to throttle, or filter with <code>op:GetCart</code>.</p></div>
-          <div class="specimen"><p class="spec-name">Callout</p><div class="callout"><p><strong>Check your company's policy.</strong> Sending traffic around a work VPN can break it.</p></div></div>
+          <div class="specimen"><p class="spec-name">Callout</p><div class="callout"><p><strong>Think before trusting.</strong> While the Mac trusts the CA, wraith can decrypt HTTPS from every app.</p></div></div>
         </div>
         <div class="specimen wide"><p class="spec-name">Steps</p>
           <ol class="howto">
