@@ -91,31 +91,16 @@ func httptestPlain(t *testing.T) string {
 	return (&url.URL{Scheme: "http", Host: ln.Addr().String()}).String()
 }
 
-func TestR3_5_EachConnectionShowsItsRoute(t *testing.T) {
-	ts := upstreamServer(t, false, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok") })
-	e := startMITM(t, poolOf(ts.Certificate()), func(o *Options) {
-		o.Route = func(host string) string {
-			if host == "127.0.0.1" {
-				return "direct"
-			}
-			return "vpn"
-		}
-	})
-	if _, _, err := get(t, e.client(poolOf(e.ca.Certificate()), false), ts.URL+"/r"); err != nil {
-		t.Fatal(err)
-	}
-	e.waitFlow(t, "with route direct", func(f store.Flow) bool { return f.URL == ts.URL+"/r" && f.Route == "direct" })
-
+func TestAFailedDialIsRecorded(t *testing.T) {
 	failing := startMITM(t, nil, func(o *Options) {
 		o.Dialer = hangingDialer{}
 		o.DialTimeout = 50 * time.Millisecond
-		o.Route = func(string) string { return "direct" }
 	})
 	if status := rawStatus(t, failing.addr, "CONNECT blocked.test:443 HTTP/1.1\r\nHost: blocked.test:443\r\n\r\n"); status != http.StatusBadGateway {
 		t.Fatalf("status %d", status)
 	}
-	failing.waitFlow(t, "for the failed bypass", func(f store.Flow) bool {
-		return f.Kind == store.KindTunnel && f.URL == "blocked.test:443" && f.Status == 502 && f.Route == "failed"
+	failing.waitFlow(t, "for the failed dial", func(f store.Flow) bool {
+		return f.Kind == store.KindTunnel && f.URL == "blocked.test:443" && f.Status == 502 && f.Err != ""
 	})
 }
 

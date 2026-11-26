@@ -1,5 +1,5 @@
 // Package proxy is wraith's HTTP proxy: it splices CONNECT tunnels, forwards plain HTTP
-// requests, decrypts the tunnels of the capture source and routes around the VPN. It
+// requests, decrypts the tunnels of the capture source and records what it sees. It
 // listens on loopback; only with devices on does it also listen on one address of the
 // local network, and then a peer there gets in only once the user allows it (S2.6).
 package proxy
@@ -34,8 +34,7 @@ const (
 	DefaultDialTimeout       = 10 * time.Second
 )
 
-// Dialer opens upstream connections. The bypass router (R3) will provide one that binds
-// to the physical interface; the default is a plain net.Dialer.
+// Dialer opens upstream connections; the default is a plain net.Dialer.
 type Dialer interface {
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 }
@@ -70,10 +69,6 @@ type Options struct {
 
 	// Store receives every flow inside the source; nil records nothing.
 	Store *store.Store
-
-	// Route names how an upstream host is reached, for the log: "vpn" or "direct" (R3.5).
-	// A failed "direct" dial is shown as "failed". Nil shows no route.
-	Route func(host string) string
 
 	// Admit decides how far a peer that is not on this Mac gets (S2.6). Nil refuses
 	// every such peer (S2.1).
@@ -230,7 +225,7 @@ func New(opts Options) *Server {
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			flowOf(r.Context()).failed(http.StatusBadGateway, s.routeName(r.URL.Host, true), err.Error())
+			flowOf(r.Context()).failed(http.StatusBadGateway, err.Error())
 			w.WriteHeader(http.StatusBadGateway)
 		},
 	}

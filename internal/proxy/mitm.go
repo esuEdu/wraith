@@ -196,9 +196,9 @@ func (s *Server) newTLSReverseProxy() *httputil.ReverseProxy {
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			var verr *tls.CertificateVerificationError
 			if errors.As(err, &verr) {
-				flowOf(r.Context()).failed(http.StatusBadGateway, "", "upstream certificate rejected: "+verr.Err.Error())
+				flowOf(r.Context()).failed(http.StatusBadGateway, "upstream certificate rejected: "+verr.Err.Error())
 			} else {
-				flowOf(r.Context()).failed(http.StatusBadGateway, s.routeName(r.URL.Host, true), err.Error())
+				flowOf(r.Context()).failed(http.StatusBadGateway, err.Error())
 			}
 			w.WriteHeader(http.StatusBadGateway)
 		},

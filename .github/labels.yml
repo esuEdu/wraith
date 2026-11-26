@@ -6,7 +6,7 @@
 - {name: "type:docs", color: "0075ca", description: "README and specs"}
 - {name: "area:proxy", color: "fbca04", description: "Listener, CONNECT, forwarding"}
 - {name: "area:source", color: "fbca04", description: "Process lookup and source filter (R1)"}
-- {name: "area:route", color: "fbca04", description: "Bypass rules, bound dialer, DNS (R3)"}
+- {name: "area:route", color: "fbca04", description: "VPN bypass (R3), removed in v2.0.0"}
 - {name: "area:sysproxy", color: "fbca04", description: "System proxy set and restore (R4)"}
 - {name: "area:ca", color: "fbca04", description: "CA and leaf certificates (R2, S1)"}
 - {name: "area:sim", color: "fbca04", description: "Simulator integration"}

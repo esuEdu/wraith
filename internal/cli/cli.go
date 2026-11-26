@@ -27,8 +27,8 @@ import (
 	"github.com/esuEdu/wraith/internal/export"
 	"github.com/esuEdu/wraith/internal/home"
 	"github.com/esuEdu/wraith/internal/keychain"
+	"github.com/esuEdu/wraith/internal/netif"
 	"github.com/esuEdu/wraith/internal/proxy"
-	"github.com/esuEdu/wraith/internal/route"
 	"github.com/esuEdu/wraith/internal/sim"
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/store"
@@ -289,7 +289,7 @@ func (a *app) startCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.IntVar(&port, "port", 9090, "proxy port on 127.0.0.1 and ::1")
 	f.StringVar(&source, "source", "simulator", "capture source: all, simulator[:udid|name], app:<name|bundle-id>, pid:<pid>, device[:ip]")
-	f.StringVar(&iface, "iface", "auto", "physical interface for --device and bypassed hosts: auto, or en0, en1, ...")
+	f.StringVar(&iface, "iface", "auto", "the Wi-Fi or Ethernet interface --device listens on: auto, or en0, en1, ...")
 	f.IntVar(&maxFlows, "max-flows", 5000, "flows kept in memory")
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
 	f.BoolVar(&noSystemProxy, "no-system-proxy", false, "listen only; leave the system proxy settings alone")
@@ -399,15 +399,13 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 		return fail(ExitUsage, "%v", err)
 	}
 
-	// R3.3: every connection is dialed through the router, whatever its source.
-	rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
-	router := route.New(rctx, a.d.Runner, cfg.Bypass, cfg.Interface)
-	rcancel()
 	var devs *devices
 	devWarn := ""
 	useTUI := !so.logMode && !so.jsonLog && a.d.IsTerminal()
 	if so.device {
-		ifi, err := router.Iface()
+		ictx, icancel := context.WithTimeout(ctx, 10*time.Second)
+		ifi, err := netif.DetectIface(ictx, a.d.Runner, cfg.Interface)
+		icancel()
 		var subnet *net.IPNet
 		if err == nil {
 			subnet, err = deviceNet(ifi.Name)
@@ -447,7 +445,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 			a.info("warning: %s", devWarn)
 		}
 	}
-	live := newLiveState(h, cfg, src, flows, router)
+	live := newLiveState(h, cfg, src, flows)
 	live.devs = devs
 	if smErr == nil {
 		live.sims = sm
@@ -460,16 +458,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	popts.AppFromUserAgent = source.AppFromUserAgent
 	live.mocks = newMocks(h, cfg.Mocks, a.notice)
 	popts.Mock = live.mocks.For
-	popts.Dialer = router
-	popts.Route = func(host string) string { r, _ := router.Route(host); return r }
-	if len(cfg.Bypass) > 0 {
-		a.info("warning: config.yaml has a bypass list: %s", bypassDeprecated)
-		if ifi, err := router.Iface(); err != nil {
-			a.info("warning: bypass: %v; the %d bypassed host(s) will fail, never use the VPN", err, len(cfg.Bypass))
-		} else {
-			a.info("bypassing %d host(s) on %s, IPv6 first", len(cfg.Bypass), ifi.Name)
-		}
-	}
+	a.warnOldBypass(cfg)
 	a.info("capturing %s; everything else passes through untouched", src)
 	srv := proxy.New(popts)
 	live.srv = srv

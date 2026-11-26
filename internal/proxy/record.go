@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
@@ -66,8 +65,8 @@ func (fr *flowRec) trace() *httptrace.ClientTrace {
 	}
 }
 
-// timing turns the marks into phases, ending at end. The dial is wraith's router, which
-// may resolve names itself: then DNS is not seen apart and counts as connect.
+// timing turns the marks into phases, ending at end. A Dialer that resolves names
+// itself hides DNS from the trace: then it counts as connect.
 func (m marks) timing(start, end time.Time) store.Timing {
 	if m.gotConn.IsZero() || m.firstByte.IsZero() {
 		return store.Timing{}
@@ -83,7 +82,7 @@ func (m marks) timing(start, end time.Time) store.Timing {
 		t.DNS = span(m.dnsStart, m.dnsDone)
 		t.TLS = span(m.tlsStart, m.tlsDone)
 		t.Connect = span(m.connStart, m.connDone)
-		if t.Connect == 0 { // the router dialed without telling: all of the dial but DNS
+		if t.Connect == 0 { // the Dialer dialed without telling: all of the dial but DNS
 			dialEnd := m.tlsStart
 			if dialEnd.IsZero() {
 				dialEnd = m.gotConn
@@ -118,7 +117,7 @@ func (s *Server) beginFlow(r *http.Request, displayURL, host string) *http.Reque
 		return r
 	}
 	fr := &flowRec{s: s, f: store.Flow{
-		Kind: store.KindHTTP, Start: time.Now(), Source: v.Label, Route: s.routeName(host, false),
+		Kind: store.KindHTTP, Start: time.Now(), Source: v.Label,
 		Method: r.Method, URL: displayURL, Proto: r.Proto, ReqHeader: r.Header.Clone(),
 		Throttle: s.ThrottleName(),
 	}}
@@ -164,15 +163,12 @@ func (fr *flowRec) response(resp *http.Response) {
 }
 
 // failed records a flow that got no response from the upstream.
-func (fr *flowRec) failed(status int, route, why string) {
+func (fr *flowRec) failed(status int, why string) {
 	if fr == nil {
 		return
 	}
 	fr.mu.Lock()
 	fr.f.Status, fr.f.Err = status, why
-	if route != "" {
-		fr.f.Route = route
-	}
 	fr.mu.Unlock()
 	fr.commit()
 }
@@ -204,24 +200,7 @@ func (s *Server) recordTunnel(ctx context.Context, start time.Time, target strin
 	}
 	s.opts.Store.Add(store.Flow{
 		Kind: store.KindTunnel, Start: start, Duration: time.Since(start), Source: v.Label, Throttle: s.ThrottleName(),
-		Route: s.routeName(target, status != http.StatusOK), Method: http.MethodConnect,
-		URL: target, Status: status, Err: why,
+		Method: http.MethodConnect,
+		URL:    target, Status: status, Err: why,
 	})
-}
-
-// routeName is the route for host[:port] ("" without a Route function); a failed bypass
-// is "failed" (R3.5).
-func (s *Server) routeName(hostport string, failed bool) string {
-	if s.opts.Route == nil {
-		return ""
-	}
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		host = h
-	}
-	r := s.opts.Route(strings.Trim(host, "[]"))
-	if failed && r == "direct" {
-		r = "failed"
-	}
-	return r
 }

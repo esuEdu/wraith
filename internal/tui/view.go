@@ -120,19 +120,17 @@ func (m *Model) row(f store.Flow, sel bool) string {
 	case f.Status == 0:
 		status = "ERR"
 	}
-	routeStyle := t.dim
-	switch f.Route {
-	case "direct":
-		routeStyle = t.direct
-	case "failed":
-		routeStyle = t.bad
+	via := f.Via()
+	viaStyle := t.dim
+	if via == "mock" {
+		viaStyle = t.via
 	}
 	cols := []string{
 		f.Start.Format("15:04:05"),
 		fmt.Sprintf("%-22.22s", f.Source),
 		status,
 		fmt.Sprintf("%-7.7s", f.Method),
-		fmt.Sprintf("%-6.6s", f.Route),
+		fmt.Sprintf("%-6.6s", via),
 	}
 	url := f.URL
 	op := ""
@@ -176,7 +174,7 @@ func (m *Model) row(f store.Flow, sel bool) string {
 		lead = t.accentBold.Render("◆")
 	}
 	line := lead + t.dim.Render(cols[0]) + " " + cols[1] + " " + stStyle.Render(cols[2]) + " " +
-		t.method(f.Method).Render(cols[3]) + " " + routeStyle.Render(cols[4]) + " " + host + t.muted.Render(rest) + why
+		t.method(f.Method).Render(cols[3]) + " " + viaStyle.Render(cols[4]) + " " + host + t.muted.Render(rest) + why
 	return clip(line, m.width)
 }
 
@@ -300,8 +298,8 @@ func (m *Model) detailTop(f store.Flow) []string {
 		}
 		top = append(top, gql)
 	}
-	for _, s := range []string{f.Proto, f.Duration.Round(time.Millisecond).String(), "route " + f.Route, extra, f.Source, f.Start.Format("15:04:05.000")} {
-		if strings.TrimSpace(s) != "" && s != "route " {
+	for _, s := range []string{f.Proto, f.Duration.Round(time.Millisecond).String(), "via " + f.Via(), extra, f.Source, f.Start.Format("15:04:05.000")} {
+		if strings.TrimSpace(s) != "" && s != "via " {
 			meta = append(meta, t.muted.Render(s))
 		}
 	}

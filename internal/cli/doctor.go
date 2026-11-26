@@ -16,7 +16,7 @@ import (
 	"github.com/esuEdu/wraith/internal/config"
 	"github.com/esuEdu/wraith/internal/home"
 	"github.com/esuEdu/wraith/internal/keychain"
-	"github.com/esuEdu/wraith/internal/route"
+	"github.com/esuEdu/wraith/internal/netif"
 	"github.com/esuEdu/wraith/internal/sysproxy"
 )
 
@@ -34,23 +34,17 @@ func (r *report) line(status, format string, args ...any) {
 }
 
 func (a *app) doctorCmd() *cobra.Command {
-	var host string
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check the system proxy, CA, simulators and interface",
 		Long: "Checks what wraith depends on and prints ok, info, warn or fail for each.\n" +
-			"With a bypass list (deprecated, removed in v2.0.0) or --host, it also dials a test\n" +
-			"host the normal way and bound to the physical interface, for IPv4 and IPv6\n" +
-			"separately, so a VPN that blocks one shows.\n" +
 			"Exits 3 if any check fails.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return a.doctor(cmd.Context(), host) },
+		RunE: func(cmd *cobra.Command, _ []string) error { return a.doctor(cmd.Context()) },
 	}
-	cmd.Flags().StringVar(&host, "host", "", "test host for the bypass check, run even with an empty bypass list (deprecated, removed in v2.0.0)")
-	return cmd
 }
 
-func (a *app) doctor(ctx context.Context, host string) error {
+func (a *app) doctor(ctx context.Context) error {
 	r := &report{a: a}
 	h, err := a.openHome()
 	if err != nil {
@@ -69,7 +63,10 @@ func (a *app) doctor(ctx context.Context, host string) error {
 	running := a.doctorInstance(r, h)
 	a.doctorProxy(ctx, r, h, cfg, running)
 	a.doctorCA(ctx, r, h)
-	a.doctorBypass(ctx, r, cfg, host)
+	a.doctorInterface(ctx, r, cfg)
+	if len(cfg.Bypass) > 0 {
+		r.line("warn", "config: a bypass list of %d host(s) is ignored: %s", len(cfg.Bypass), bypassRemoved)
+	}
 
 	if r.failed > 0 {
 		return fail(ExitState, "%d check(s) failed", r.failed)
@@ -173,76 +170,18 @@ func (a *app) doctorCA(ctx context.Context, r *report, h *home.Home) {
 	}
 }
 
-func (a *app) doctorBypass(ctx context.Context, r *report, cfg config.Config, host string) {
-	checking := len(cfg.Bypass) > 0 || host != ""
-	if checking {
-		r.line("warn", "bypass: %s", bypassDeprecated)
-	}
-	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	router := route.New(rctx, a.d.Runner, cfg.Bypass, cfg.Interface)
-	cancel()
-	ifi, err := router.Iface()
+// doctorInterface checks the physical interface that --device listens on.
+func (a *app) doctorInterface(ctx context.Context, r *report, cfg config.Config) {
+	ictx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ifi, err := netif.DetectIface(ictx, a.d.Runner, cfg.Interface)
 	if err != nil {
-		status, what := "warn", "--device"
-		if len(cfg.Bypass) > 0 {
-			status, what = "fail", "--device and bypassed hosts"
-		}
-		r.line(status, "interface: %v; %s cannot work", err, what)
+		r.line("warn", "interface: %v; --device cannot work", err)
 		return
 	}
 	addrs := make([]string, 0, len(ifi.Addrs))
 	for _, ip := range ifi.Addrs {
 		addrs = append(addrs, ip.String())
 	}
-	r.line("ok", "interface: %s (%s)", ifi.Name, strings.Join(addrs, ", "))
-
-	if !checking {
-		return // nothing to bypass: no test dials
-	}
-	if host == "" {
-		host = "example.com"
-		for _, p := range cfg.Bypass {
-			if !strings.HasPrefix(p, "*.") {
-				host = p
-				break
-			}
-		}
-	}
-	pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	probes, dnsErr := router.Probe(pctx, host, "443")
-	if dnsErr != nil {
-		r.line("warn", "bypass DNS for %s over %s failed: %v", host, ifi.Name, dnsErr)
-	}
-	if len(probes) == 0 {
-		r.line("fail", "bypass check: could not resolve %s", host)
-		return
-	}
-	var works []string
-	for _, p := range probes {
-		r.line("info", "%s %s: normal path %s; bypass %s", p.Family, p.Addr, describeLeg(p.Default, ifi.Name), describeLeg(p.Bound, ifi.Name))
-		if p.Bound.Err == nil {
-			works = append(works, p.Family)
-		}
-	}
-	if len(works) == 0 {
-		r.line("fail", "bypass is blocked on this network for %s: the VPN refuses connections bound to %s", host, ifi.Name)
-		return
-	}
-	r.line("ok", "bypass works for %s over %s", host, strings.Join(works, " and "))
-}
-
-func describeLeg(l route.Leg, physical string) string {
-	if l.Err != nil {
-		msg := l.Err.Error()
-		if i := strings.LastIndex(msg, ": "); i >= 0 && len(msg) > 80 {
-			msg = msg[i+2:]
-		}
-		return "fails (" + msg + ")"
-	}
-	where := "via " + l.Via
-	if l.Via != physical && strings.HasPrefix(l.Via, "utun") {
-		where += " (a VPN tunnel)"
-	}
-	return where + " from " + l.Local.String()
+	r.line("ok", "interface: %s (%s), for --device", ifi.Name, strings.Join(addrs, ", "))
 }

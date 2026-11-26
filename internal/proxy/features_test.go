@@ -145,7 +145,7 @@ func TestMockAnswersWithoutTheUpstream(t *testing.T) {
 		t.Fatalf("the upstream was asked %d times, want only for /other", hits.Load())
 	}
 	f := e.waitFlow(t, "mocked", func(f store.Flow) bool { return f.Method == "POST" })
-	if f.Route != "mock" || f.Mock != "POST */cart" || f.Status != 503 || string(f.ReqBody.Data) != `{"sku":7}` ||
+	if f.Via() != "mock" || f.Mock != "POST */cart" || f.Status != 503 || string(f.ReqBody.Data) != `{"sku":7}` ||
 		string(f.RespBody.Data) != `{"error":"down"}` || f.Timing.Known {
 		t.Fatalf("mocked flow: %+v", f)
 	}
@@ -197,11 +197,11 @@ func TestAMockThatReadsTheBodyLeavesItWholeForTheUpstream(t *testing.T) {
 	if string(got) != `{"data":"mocked"}` {
 		t.Fatalf("GetCart: %q", got)
 	}
-	f := e.waitFlow(t, "mocked GetCart", func(f store.Flow) bool { return f.Route == "mock" })
+	f := e.waitFlow(t, "mocked GetCart", func(f store.Flow) bool { return f.Via() == "mock" })
 	if store.GraphQLLabel(f.GraphQL) != "query GetCart" {
 		t.Fatalf("the mocked flow's operation: %v", f.GraphQL)
 	}
-	user := e.waitFlow(t, "GetUser", func(f store.Flow) bool { return f.Route != "mock" && f.Kind == store.KindHTTP })
+	user := e.waitFlow(t, "GetUser", func(f store.Flow) bool { return f.Via() != "mock" && f.Kind == store.KindHTTP })
 	if user.ReqBody.Size != int64(len(big)) {
 		t.Fatalf("recorded request body %d of %d bytes", user.ReqBody.Size, len(big))
 	}

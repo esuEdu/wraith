@@ -140,7 +140,7 @@ func TestRuntimeName(t *testing.T) {
 	}
 }
 
-func TestLiveBypassAndNoDecryptAreSavedAndApplied(t *testing.T) {
+func TestR6_2_LiveNoDecryptIsSavedToTheConfig(t *testing.T) {
 	e := newEnv(t)
 	var acts tui.Actions
 	d := e.deps()
@@ -148,19 +148,16 @@ func TestLiveBypassAndNoDecryptAreSavedAndApplied(t *testing.T) {
 	done := make(chan int, 1)
 	go func() { done <- Main(t.Context(), []string{"start", "--port", freePort(t), "--no-system-proxy"}, d) }()
 	<-e.ready
-	if err := acts.Bypass("api.partner.io"); err != nil {
-		t.Fatal(err)
-	}
-	if err := acts.Bypass("api.partner.io"); err == nil {
-		t.Fatal("duplicate accepted")
-	}
 	if err := acts.NoDecrypt("pinned.bank.test"); err != nil {
 		t.Fatal(err)
+	}
+	if err := acts.NoDecrypt("Pinned.Bank.Test."); err == nil {
+		t.Fatal("duplicate accepted")
 	}
 	e.sigs <- syscall.SIGTERM
 	<-done
 	b, _ := os.ReadFile(filepath.Join(e.dir, "config.yaml"))
-	if !strings.Contains(string(b), `"api.partner.io"`) || !strings.Contains(string(b), `"pinned.bank.test"`) {
+	if !strings.Contains(string(b), `"pinned.bank.test"`) || !strings.Contains(string(b), "# always passed through") {
 		t.Fatalf("config.yaml:\n%s", b)
 	}
 }

@@ -19,7 +19,7 @@ import (
 func secretFlow() store.Flow {
 	return store.Flow{
 		Kind: store.KindHTTP, Start: time.Date(2026, 11, 23, 18, 0, 0, 0, time.UTC), Duration: 42 * time.Millisecond,
-		Source: "sim iPhone 17 · Shop", Route: "direct", Method: "POST", Proto: "HTTP/2.0", Status: 201,
+		Source: "sim iPhone 17 · Shop", Throttle: "3g", Method: "POST", Proto: "HTTP/2.0", Status: 201,
 		URL: "https://api.example.com/v1/login?access_token=SECRETQUERY&page=2",
 		ReqHeader: http.Header{
 			"Authorization": {"Bearer SECRETAUTH"}, "Cookie": {"id=SECRETCOOKIE"},
@@ -103,7 +103,7 @@ func TestHARStructure(t *testing.T) {
 	if e.Response.Content.Encoding != "base64" || e.Response.Content.Text != "//4A" {
 		t.Fatalf("binary body: %+v", e.Response.Content)
 	}
-	if !strings.Contains(e.Comment, "source: sim iPhone 17 · Shop") || !strings.Contains(e.Comment, "route: direct") {
+	if !strings.Contains(e.Comment, "source: sim iPhone 17 · Shop") || !strings.Contains(e.Comment, "slowed like 3g") {
 		t.Fatalf("comment %q", e.Comment)
 	}
 	if len(e.Request.QueryString) != 2 {
@@ -221,7 +221,7 @@ func TestHARHasTheTimingPhasesAndWebSocketMessages(t *testing.T) {
 			{At: t0, FromClient: true, Op: "text", Data: []byte("hi")},
 			{At: t0.Add(time.Second), Op: "binary", Data: []byte{0xff, 0}},
 		}},
-		{Kind: store.KindHTTP, Start: t0, Method: "GET", URL: "https://a.test/cart", Status: 503, Route: "mock", Mock: "GET https://a.test/cart"},
+		{Kind: store.KindHTTP, Start: t0, Method: "GET", URL: "https://a.test/cart", Status: 503, Mock: "GET https://a.test/cart"},
 	}
 	b, err := HAR(flows, NewRedactor(nil))
 	if err != nil {

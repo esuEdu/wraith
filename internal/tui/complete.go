@@ -117,7 +117,7 @@ func (m *Model) candidates(field string) []string {
 		if f.Status != 0 {
 			add(strconv.Itoa(f.Status))
 		}
-		add(f.Route)
+		add(f.Via())
 	}
 	list := make([]string, 0, len(seen)+2)
 	for s := range seen {

@@ -69,7 +69,7 @@ func (m *Model) matches(f store.Flow) bool {
 		return true
 	}
 	ops := strings.ToLower(store.GraphQLLabel(f.GraphQL))
-	summary := strings.ToLower(fmt.Sprintf("%s %s %s %d %s %s %s", f.Source, f.Method, f.URL, f.Status, f.Route, f.Kind, f.Err)) + " " + ops
+	summary := strings.ToLower(fmt.Sprintf("%s %s %s %d %s %s %s", f.Source, f.Method, f.URL, f.Status, f.Via(), f.Kind, f.Err)) + " " + ops
 	for _, t := range m.terms {
 		var hay string
 		switch t.field {

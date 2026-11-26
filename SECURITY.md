@@ -15,7 +15,7 @@ Please include the wraith version, macOS version, and steps to reproduce.
 | --- | --- |
 | Acknowledge the report | 3 days |
 | Confirm or reject it | 7 days |
-| Fix released, for a CA key leak, the listener reachable from another host, or traffic silently sent through the VPN when it should bypass it | 14 days |
+| Fix released, for a CA key leak or the listener reachable from another host | 14 days |
 | Fix released, for anything else | Next minor release |
 
 Fixes ship as a patch release with a GitHub security advisory. Reporters are credited

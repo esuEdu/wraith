@@ -19,7 +19,7 @@ import (
 func secretFlow() store.Flow {
 	return store.Flow{
 		Kind: store.KindHTTP, Start: time.Date(2026, 11, 23, 15, 4, 5, 0, time.UTC), Duration: 34 * time.Millisecond,
-		Source: "sim iPhone 17 · Shop", Route: "direct", Method: "POST", Status: 201,
+		Source: "sim iPhone 17 · Shop", Throttle: "3g", Method: "POST", Status: 201,
 		URL:        "https://api.example.com/v1/login?session=" + strings.Repeat("s", 100) + "&token=SECRETQUERY",
 		ReqHeader:  http.Header{"Authorization": {"Bearer SECRETHEADER"}, "Cookie": {"id=SECRETCOOKIE"}},
 		RespHeader: http.Header{"Set-Cookie": {"id=SECRETSET"}},
@@ -38,11 +38,11 @@ func TestS3_3_LogLinesNeverCarryHeadersOrBodies(t *testing.T) {
 			t.Fatalf("method/host/path missing:\n%s", line)
 		}
 	}
-	if got, want := formatFlow(f), "15:04:05 [sim iPhone 17 · Shop] POST https://api.example.com/v1/login?session="+strings.Repeat("s", 56)+"… 201 1.2 kB 34ms direct"; got != want {
+	if got, want := formatFlow(f), "15:04:05 [sim iPhone 17 · Shop] POST https://api.example.com/v1/login?session="+strings.Repeat("s", 56)+"… 201 1.2 kB 34ms 3g"; got != want {
 		t.Fatalf("line\n%q\nwant\n%q", got, want)
 	}
-	short := store.Flow{Kind: store.KindTunnel, Method: "CONNECT", URL: "example.com:443", Status: 200, Route: "vpn"}
-	if got := formatFlow(short); !strings.HasSuffix(got, " CONNECT example.com:443 tunnel vpn") {
+	short := store.Flow{Kind: store.KindTunnel, Method: "CONNECT", URL: "example.com:443", Status: 200}
+	if got := formatFlow(short); !strings.HasSuffix(got, " CONNECT example.com:443 tunnel") {
 		t.Fatalf("tunnel line %q", got)
 	}
 }
