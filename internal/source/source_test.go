@@ -131,6 +131,48 @@ func TestLsofFallback(t *testing.T) {
 	}
 }
 
+func TestR1_2_ScopedSocketListFallsBackToLsof(t *testing.T) {
+	const lsofCmd = "lsof -nP -iTCP:52000 -sTCP:ESTABLISHED -Fpn"
+	lsofOut := "p100\nn127.0.0.1:9090->127.0.0.1:52000\np222\nn127.0.0.1:52000->127.0.0.1:9090\n"
+	for _, c := range []struct {
+		name       string
+		pcb        func(int, int) (int, error)
+		lsof       bool
+		want       int
+		wantErr    error
+		scoped     bool
+		pcbCalls   int // on a second lookup too
+		secondPCBs int
+	}{
+		{"the list answers", func(int, int) (int, error) { return 333, nil }, false, 333, nil, false, 1, 2},
+		{"macOS 27.2: not in the list, lsof finds it", func(int, int) (int, error) { return 0, ErrUnknown }, true, 222, nil, true, 1, 1},
+		{"gone everywhere", func(int, int) (int, error) { return 0, ErrUnknown }, false, 0, ErrUnknown, false, 1, 2},
+		{"changed layout", func(int, int) (int, error) { return 0, errLayout }, true, 222, nil, false, 1, 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := execx.NewFake()
+			if c.lsof {
+				f.On(lsofCmd, lsofOut, nil)
+			}
+			r := NewResolver(f)
+			r.self = 100
+			calls := 0
+			r.pcb = func(l, p int) (int, error) { calls++; return c.pcb(l, p) }
+			pid, err := r.owner(context.Background(), 52000, 9090)
+			if pid != c.want || !errors.Is(err, c.wantErr) || (c.wantErr == nil && err != nil) {
+				t.Fatalf("pid %d err %v, want %d %v", pid, err, c.want, c.wantErr)
+			}
+			if r.scoped.Load() != c.scoped || calls != c.pcbCalls {
+				t.Fatalf("scoped %v after %d list reads, want %v after %d", r.scoped.Load(), calls, c.scoped, c.pcbCalls)
+			}
+			_, _ = r.owner(context.Background(), 52000, 9090)
+			if calls != c.secondPCBs {
+				t.Fatalf("list read %d times over two lookups, want %d", calls, c.secondPCBs)
+			}
+		})
+	}
+}
+
 func TestSimulatorUDIDAndOutermostApp(t *testing.T) {
 	args := []string{"launchd_sim", "/Users/x/Library/Developer/CoreSimulator/Devices/196410f2-8977-4511-9257-c038a2ac78aa/data/var/run/launchd_bootstrap.plist"}
 	if got := simUDID(args); got != "196410F2-8977-4511-9257-C038A2AC78AA" {

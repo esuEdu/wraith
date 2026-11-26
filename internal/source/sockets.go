@@ -17,7 +17,9 @@ import (
 // pcblist_n is a stream of records, each starting with its length and kind. For every TCP
 // connection the kernel writes an XSO_INPCB record (ports) followed by an XSO_SOCKET
 // record (owning PIDs). Offsets below were measured on macOS 27 against connections with
-// known ports and PIDs; recordSize guards them, and a mismatch falls back to lsof.
+// known ports and PIDs; recordSize guards them, and a mismatch falls back to lsof. Since
+// macOS 27.2 the list holds only the calling process's own sockets (same layout), so a
+// client's socket is missing from it and lsof answers instead (Resolver.ownerOf).
 const (
 	kindSocket = 0x001
 	kindInpcb  = 0x010
@@ -94,7 +96,8 @@ func pidAt(rec []byte, off int) int {
 	return int(v)
 }
 
-// ownerFromLsof is the slow fallback (30 to 80 ms) for a kernel whose layout changed.
+// ownerFromLsof is the slow fallback (30 to 80 ms): for a kernel whose layout changed, or
+// one that lists only the caller's own sockets.
 func ownerFromLsof(ctx context.Context, run execx.Runner, lport, fport, self int) (int, error) {
 	out, err := run.Run(ctx, "lsof", "-nP", "-iTCP:"+strconv.Itoa(lport), "-sTCP:ESTABLISHED", "-Fpn")
 	if err != nil {
