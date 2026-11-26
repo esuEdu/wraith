@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -72,6 +73,11 @@ type Resolver struct {
 	bundles map[string]string // app path -> bundle id
 	// owner finds a socket's PID; replaced in tests.
 	owner func(ctx context.Context, lport, fport int) (int, error)
+	// pcb reads the kernel's socket list (ownerFromPCBList); replaced in tests.
+	pcb func(lport, fport int) (int, error)
+	// scoped is set once the kernel's list proved to hold only wraith's own sockets
+	// (macOS 27.2 and later): from then on, lsof answers directly.
+	scoped atomic.Bool
 }
 
 type cachedProc struct {
@@ -81,21 +87,39 @@ type cachedProc struct {
 
 const procCacheTTL = 10 * time.Second
 
-// NewResolver returns a Resolver. run executes plutil (bundle ids) and, if the kernel's
-// socket list ever changes layout, lsof.
+// NewResolver returns a Resolver. run executes plutil (bundle ids) and lsof, when the
+// kernel's socket list cannot answer.
 func NewResolver(run execx.Runner) *Resolver {
 	r := &Resolver{
 		run: run, self: os.Getpid(), now: time.Now,
 		procs: map[int]cachedProc{}, bundles: map[string]string{},
+		pcb: ownerFromPCBList,
 	}
-	r.owner = func(ctx context.Context, lport, fport int) (int, error) {
-		pid, err := ownerFromPCBList(lport, fport)
-		if errors.Is(err, errLayout) {
-			return ownerFromLsof(ctx, r.run, lport, fport, r.self)
-		}
-		return pid, err
-	}
+	r.owner = r.ownerOf
 	return r
+}
+
+// ownerOf finds the PID owning a client socket: from the kernel's socket list, which is
+// fast, else from lsof. Since macOS 27.2 the list holds only the caller's own sockets, so
+// a client is never in it; the first time lsof finds one the list missed, the list is
+// skipped from then on.
+func (r *Resolver) ownerOf(ctx context.Context, lport, fport int) (int, error) {
+	if !r.scoped.Load() {
+		pid, err := r.pcb(lport, fport)
+		switch {
+		case err == nil:
+			return pid, nil
+		case errors.Is(err, ErrUnknown): // not in the list: a scoped list, or a socket already gone
+			pid, err := ownerFromLsof(ctx, r.run, lport, fport, r.self)
+			if err == nil {
+				r.scoped.Store(true)
+			}
+			return pid, err
+		case !errors.Is(err, errLayout):
+			return 0, err
+		}
+	}
+	return ownerFromLsof(ctx, r.run, lport, fport, r.self)
 }
 
 // Lookup identifies the process behind a client connection to the proxy: clientPort is
