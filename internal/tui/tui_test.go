@@ -410,7 +410,14 @@ func TestDetailsDecodePrettyPrintAndWrapBodies(t *testing.T) {
 func TestHostActionsCurlExportClear(t *testing.T) {
 	m, act := newModel()
 	press(m, "up") // the tunnel to pinned.bank.test
-	press(m, "b", "n")
+	press(m, "b")
+	if !strings.Contains(m.status, "added pinned.bank.test to bypass") || !strings.Contains(m.status, "deprecated") {
+		t.Fatalf("b does not say the bypass is deprecated: %q", m.status)
+	}
+	press(m, "n")
+	if strings.Contains(m.status, "deprecated") {
+		t.Fatalf("n says something is deprecated: %q", m.status)
+	}
 	if strings.Join(act.bypassed, ",") != "pinned.bank.test" || strings.Join(act.noDecrypt, ",") != "pinned.bank.test" {
 		t.Fatalf("bypass %v no-decrypt %v", act.bypassed, act.noDecrypt)
 	}

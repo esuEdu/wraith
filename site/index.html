@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>wraith · terminal proxy for macOS</title>
-<meta name="description" content="wraith is a terminal proxy for macOS: inspect HTTPS from the iOS Simulator, one Mac app or one process, and send chosen hosts around your VPN.">
+<meta name="description" content="wraith is a terminal proxy for macOS: inspect HTTPS from the iOS Simulator, an iPhone or iPad on your Wi-Fi, one Mac app or one process.">
 <link rel="icon" href="assets/favicon.png?v=3" type="image/png" sizes="64x64">
 <link rel="icon" href="assets/favicon.svg?v=3" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png?v=3">
@@ -36,8 +36,8 @@
     <div class="container">
       <div class="copy-col">
         <p class="eyebrow">Terminal proxy for macOS</p>
-        <h1>See your iOS app's <span class="hl">HTTPS</span>. Route chosen hosts around your VPN.</h1>
-        <p class="lead">wraith decrypts traffic from the iOS Simulator, an iPhone or iPad on your Wi-Fi, one Mac app or one process, and passes everything else through untouched. Hosts you name skip the VPN and go out on Wi-Fi or Ethernet. All of it from the terminal.</p>
+        <h1>See your iOS app's <span class="hl">HTTPS</span>, from the terminal.</h1>
+        <p class="lead">wraith decrypts traffic from the iOS Simulator, an iPhone or iPad on your Wi-Fi, one Mac app or one process, and passes everything else through untouched. All of it from the terminal.</p>
         <div class="install">
           <code><span class="prompt">$ </span>brew install esuEdu/tap/wraith</code>
           <button class="copy" type="button" data-copy="brew install esuEdu/tap/wraith">Copy</button>
@@ -82,7 +82,7 @@
 </span><span class="live-row"> <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://cdn.shop.example<span class="t-soft">/img/42.png</span>
 </span><span class="live-row"><span class="t-mark">▌</span><span class="t-sel">12:04:34 device 192.168.0.23    503 GET     vpn    https://api.shop.example/v2/recs</span>
 </span></span><span class="t-dim t-rule">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
- <span class="t-acc"><b>↵</b></span> <span class="t-soft">details</span>  <span class="t-acc"><b>s</b></span> <span class="t-soft">source</span>  <span class="t-acc"><b>d</b></span> <span class="t-soft">device</span>  <span class="t-acc"><b>/</b></span> <span class="t-soft">filter</span>  <span class="t-acc"><b>c</b></span> <span class="t-soft">curl</span>  <span class="t-acc"><b>e</b></span> <span class="t-soft">export</span>  <span class="t-acc"><b>b</b></span> <span class="t-soft">bypass</span>  <span class="t-acc"><b>n</b></span> <span class="t-soft">no-decrypt</span>  <span class="t-acc"><b>x</b></span> <span class="t-soft">clear</span>  <span class="t-acc"><b>q</b></span> <span class="t-soft">quit</span></pre>
+ <span class="t-acc"><b>↵</b></span> <span class="t-soft">details</span>  <span class="t-acc"><b>s</b></span> <span class="t-soft">source</span>  <span class="t-acc"><b>d</b></span> <span class="t-soft">device</span>  <span class="t-acc"><b>/</b></span> <span class="t-soft">filter</span>  <span class="t-acc"><b>c</b></span> <span class="t-soft">curl</span>  <span class="t-acc"><b>e</b></span> <span class="t-soft">export</span>  <span class="t-acc"><b>n</b></span> <span class="t-soft">no-decrypt</span>  <span class="t-acc"><b>x</b></span> <span class="t-soft">clear</span>  <span class="t-acc"><b>q</b></span> <span class="t-soft">quit</span></pre>
       </figure>
     </div>
   </section>
@@ -106,8 +106,8 @@
           <p>Then make the app misbehave on purpose: <kbd>m</kbd> <a href="docs/#mocks">mocks</a> a request with a response you edit, and <kbd>t</kbd> <a href="docs/#slow-network">slows the network</a> down to 3G or worse, for that app only. <kbd>=</kbd> compares two requests to see what changed.</p>
         </div>
         <div class="job">
-          <h3>Route around the VPN</h3>
-          <p>Hosts on the bypass list are resolved and connected on the physical interface instead of the VPN tunnel, IPv6 first.</p>
+          <h3>Route around the VPN (deprecated)</h3>
+          <p><strong>Deprecated in v1.6, removed in v2.0.0.</strong> Hosts on the bypass list are resolved and connected on the physical interface instead of the VPN tunnel, IPv6 first.</p>
           <div class="terminal">
 <pre><span class="t-dim">$</span> wraith bypass add api.partner.example
 <span class="t-dim">wraith: added api.partner.example</span>

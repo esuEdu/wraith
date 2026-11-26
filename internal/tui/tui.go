@@ -299,9 +299,9 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		return m, m.openPicker()
 	case "b":
-		m.hostAction("bypass", m.act.Bypass)
+		m.hostAction("bypass", m.act.Bypass, "; the VPN bypass is deprecated and goes away in v2.0.0")
 	case "n":
-		m.hostAction("no-decrypt", m.act.NoDecrypt)
+		m.hostAction("no-decrypt", m.act.NoDecrypt, "")
 	case "c":
 		return m, m.copyCurl()
 	case "r":
@@ -447,7 +447,8 @@ func shortURL(u string) string {
 	return u
 }
 
-func (m *Model) hostAction(what string, do func(string) error) {
+// hostAction adds the selected flow's host to a list; note follows the confirmation.
+func (m *Model) hostAction(what string, do func(string) error, note string) {
 	f, ok := m.selected()
 	if !ok {
 		return
@@ -460,7 +461,7 @@ func (m *Model) hostAction(what string, do func(string) error) {
 		m.say(what + " " + host + ": " + err.Error())
 		return
 	}
-	m.say("added " + host + " to " + what + " (saved to config.yaml; applies to new connections)")
+	m.say("added " + host + " to " + what + " (saved to config.yaml; applies to new connections)" + note)
 }
 
 // toggleMock mocks the selected request with its response, or stops mocking it.

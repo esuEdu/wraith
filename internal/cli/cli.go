@@ -289,7 +289,7 @@ func (a *app) startCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.IntVar(&port, "port", 9090, "proxy port on 127.0.0.1 and ::1")
 	f.StringVar(&source, "source", "simulator", "capture source: all, simulator[:udid|name], app:<name|bundle-id>, pid:<pid>, device[:ip]")
-	f.StringVar(&iface, "iface", "auto", "physical interface for bypassed hosts: auto, or en0, en1, ...")
+	f.StringVar(&iface, "iface", "auto", "physical interface for --device and bypassed hosts: auto, or en0, en1, ...")
 	f.IntVar(&maxFlows, "max-flows", 5000, "flows kept in memory")
 	f.Int64Var(&maxBody, "max-body", 1<<20, "bodies above this many bytes are truncated")
 	f.BoolVar(&noSystemProxy, "no-system-proxy", false, "listen only; leave the system proxy settings alone")
@@ -463,6 +463,7 @@ func (a *app) start(ctx context.Context, o config.Overrides, so startOpts) (err 
 	popts.Dialer = router
 	popts.Route = func(host string) string { r, _ := router.Route(host); return r }
 	if len(cfg.Bypass) > 0 {
+		a.info("warning: config.yaml has a bypass list: %s", bypassDeprecated)
 		if ifi, err := router.Iface(); err != nil {
 			a.info("warning: bypass: %v; the %d bypassed host(s) will fail, never use the VPN", err, len(cfg.Bypass))
 		} else {

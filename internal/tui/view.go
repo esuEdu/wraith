@@ -229,7 +229,7 @@ func (m *Model) footer() string {
 	}
 	// Most useful first; on a narrow screen the ones before "q quit" go, from the end.
 	keys := []string{"↵", "details", "s", "source", "/", "filter", "c", "curl", "r", "resend", "m", "mock", "=", "compare", "t", "throttle", "e", "export",
-		"b", "bypass", "n", "no-decrypt", "x", "clear", "↑↓", "move", "q", "quit"}
+		"n", "no-decrypt", "x", "clear", "↑↓", "move", "q", "quit"}
 	if m.dev.Addr != "" {
 		keys = append(keys[:4], append([]string{"d", "device"}, keys[4:]...)...)
 	}
