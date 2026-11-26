@@ -18,20 +18,18 @@ import (
 	"github.com/esuEdu/wraith/internal/export"
 	"github.com/esuEdu/wraith/internal/home"
 	"github.com/esuEdu/wraith/internal/proxy"
-	"github.com/esuEdu/wraith/internal/route"
 	"github.com/esuEdu/wraith/internal/sim"
 	"github.com/esuEdu/wraith/internal/source"
 	"github.com/esuEdu/wraith/internal/store"
 	"github.com/esuEdu/wraith/internal/tui"
 )
 
-// liveState is what a running wraith can change without restarting: the capture source,
-// the bypass list and the no-decrypt list. Changes apply to new connections; list
-// changes are also written to config.yaml.
+// liveState is what a running wraith can change without restarting: the capture source
+// and the no-decrypt list. Changes apply to new connections; list changes are also
+// written to config.yaml.
 type liveState struct {
 	h      *home.Home
 	flows  *store.Store
-	router *route.Router
 	redact []string
 	dir    string // where e exports HAR files
 
@@ -48,16 +46,14 @@ type liveState struct {
 
 	src       atomic.Pointer[source.Source]
 	noDecrypt atomic.Pointer[[]string]
-	bypass    atomic.Pointer[[]string]
 	mu        sync.Mutex // one config edit at a time
 }
 
-func newLiveState(h *home.Home, cfg config.Config, src source.Source, flows *store.Store, router *route.Router) *liveState {
-	l := &liveState{h: h, flows: flows, router: router, redact: cfg.Export.RedactHeaders, runningApps: source.RunningApps, simApps: source.RunningSimApps}
+func newLiveState(h *home.Home, cfg config.Config, src source.Source, flows *store.Store) *liveState {
+	l := &liveState{h: h, flows: flows, redact: cfg.Export.RedactHeaders, runningApps: source.RunningApps, simApps: source.RunningSimApps}
 	l.src.Store(&src)
-	nd, bp := slices.Clone(cfg.NoDecrypt), slices.Clone(cfg.Bypass)
+	nd := slices.Clone(cfg.NoDecrypt)
 	l.noDecrypt.Store(&nd)
-	l.bypass.Store(&bp)
 	if wd, err := os.Getwd(); err == nil {
 		l.dir = wd
 	}
@@ -175,37 +171,24 @@ func runtimeName(rt string) string {
 	return os + " " + strings.ReplaceAll(ver, "-", ".")
 }
 
-func (l liveActions) Bypass(host string) error {
-	return l.addPattern(host, &l.bypass, config.WriteBypass, func(list []string) {
-		if l.router != nil {
-			l.router.SetRules(list)
-		}
-	})
-}
-
-func (l liveActions) NoDecrypt(host string) error {
-	return l.addPattern(host, &l.noDecrypt, config.WriteNoDecrypt, nil)
-}
-
-func (l liveActions) addPattern(raw string, list *atomic.Pointer[[]string], write func(*home.Home, []string) error, apply func([]string)) error {
+// NoDecrypt adds host to no_decrypt, in config.yaml too (R6.2); new connections to it
+// are passed through.
+func (l liveActions) NoDecrypt(raw string) error {
 	p, err := config.NormalizeHostPattern(raw)
 	if err != nil {
 		return err
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	cur := *list.Load()
+	cur := *l.noDecrypt.Load()
 	if slices.Contains(cur, p) {
 		return fmt.Errorf("already on the list")
 	}
 	next := append(slices.Clone(cur), p)
-	if err := write(l.h, next); err != nil {
+	if err := config.WriteNoDecrypt(l.h, next); err != nil {
 		return err
 	}
-	list.Store(&next)
-	if apply != nil {
-		apply(next)
-	}
+	l.noDecrypt.Store(&next)
 	return nil
 }
 

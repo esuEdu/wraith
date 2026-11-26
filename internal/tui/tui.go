@@ -25,14 +25,13 @@ type Actions interface {
 	// Choices lists the booted simulators and running Mac apps for the source picker.
 	// It may be slow (simctl), so the view calls it off the UI loop.
 	Choices() ([]Choice, error)
-	Bypass(host string) error
 	NoDecrypt(host string) error
 	Curl(f store.Flow) string
 	// Redactor hides secrets in the headers and URLs the details copy, as exports do.
 	Redactor() export.Redactor
 	ExportHAR() (path string, err error)
 	Clear()
-	// Replay sends a captured request again through the proxy's route and returns the
+	// Replay sends a captured request again through the proxy and returns the
 	// new flow. It may be slow (the upstream answers); the view calls it off the UI loop.
 	Replay(f store.Flow) (store.Flow, error)
 	// ToggleMock answers f's request with its response from now on (a mock in
@@ -298,10 +297,8 @@ func (m *Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "s":
 		return m, m.openPicker()
-	case "b":
-		m.hostAction("bypass", m.act.Bypass, "; the VPN bypass is deprecated and goes away in v2.0.0")
 	case "n":
-		m.hostAction("no-decrypt", m.act.NoDecrypt, "")
+		m.hostAction("no-decrypt", m.act.NoDecrypt)
 	case "c":
 		return m, m.copyCurl()
 	case "r":
@@ -447,8 +444,8 @@ func shortURL(u string) string {
 	return u
 }
 
-// hostAction adds the selected flow's host to a list; note follows the confirmation.
-func (m *Model) hostAction(what string, do func(string) error, note string) {
+// hostAction adds the selected flow's host to a list.
+func (m *Model) hostAction(what string, do func(string) error) {
 	f, ok := m.selected()
 	if !ok {
 		return
@@ -461,7 +458,7 @@ func (m *Model) hostAction(what string, do func(string) error, note string) {
 		m.say(what + " " + host + ": " + err.Error())
 		return
 	}
-	m.say("added " + host + " to " + what + " (saved to config.yaml; applies to new connections)" + note)
+	m.say("added " + host + " to " + what + " (saved to config.yaml; applies to new connections)")
 }
 
 // toggleMock mocks the selected request with its response, or stops mocking it.
@@ -544,7 +541,7 @@ func containsWords(hay, query string) bool {
 	return true
 }
 
-// flowHost is the host a flow went to, for bypass and no-decrypt.
+// flowHost is the host a flow went to, for no-decrypt.
 func flowHost(f store.Flow) string {
 	if f.Kind == store.KindTunnel {
 		h, _, err := net.SplitHostPort(f.URL)

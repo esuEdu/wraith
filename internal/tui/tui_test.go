@@ -18,13 +18,13 @@ import (
 )
 
 type fakeActions struct {
-	source              string
-	choices             []Choice
-	bypassed, noDecrypt []string
-	exported, cleared   int
-	replayed            []store.Flow
-	mocked              []store.Flow
-	throttle            string
+	source            string
+	choices           []Choice
+	noDecrypt         []string
+	exported, cleared int
+	replayed          []store.Flow
+	mocked            []store.Flow
+	throttle          string
 }
 
 func (f *fakeActions) ToggleMock(fl store.Flow) (string, error) {
@@ -49,7 +49,6 @@ func (f *fakeActions) SetSource(s string) error {
 	f.source = s
 	return nil
 }
-func (f *fakeActions) Bypass(h string) error      { f.bypassed = append(f.bypassed, h); return nil }
 func (f *fakeActions) NoDecrypt(h string) error   { f.noDecrypt = append(f.noDecrypt, h); return nil }
 func (f *fakeActions) Curl(fl store.Flow) string  { return "curl '" + fl.URL + "'" }
 func (f *fakeActions) Redactor() export.Redactor  { return export.NewRedactor(export.DefaultPatterns) }
@@ -101,10 +100,10 @@ func typeText(m *Model, s string) {
 func flows() []store.Flow {
 	t0 := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 	return []store.Flow{
-		{ID: 1, Kind: store.KindHTTP, Start: t0, Source: "sim iPhone 17 · Shop", Method: "GET", URL: "https://api.shop.test/cart", Status: 200, Route: "vpn",
+		{ID: 1, Kind: store.KindHTTP, Start: t0, Source: "sim iPhone 17 · Shop", Method: "GET", URL: "https://api.shop.test/cart", Status: 200, Throttle: "3g",
 			ReqHeader: http.Header{"Accept": {"application/json"}}, RespBody: store.Body{Data: []byte(`{"items":[]}`), Size: 12}},
-		{ID: 2, Kind: store.KindTunnel, Start: t0, Source: "sim iPhone 17 · Shop", Method: "CONNECT", URL: "pinned.bank.test:443", Status: 200, Route: "direct"},
-		{ID: 3, Kind: store.KindHTTP, Start: t0, Source: "curl", Method: "POST", URL: "http://login.test/session", Status: 503, Route: "vpn"},
+		{ID: 2, Kind: store.KindTunnel, Start: t0, Source: "sim iPhone 17 · Shop", Method: "CONNECT", URL: "pinned.bank.test:443", Status: 200},
+		{ID: 3, Kind: store.KindHTTP, Start: t0, Source: "curl", Method: "POST", URL: "http://login.test/session", Status: 503},
 	}
 }
 
@@ -145,7 +144,7 @@ func TestFilterAndDetails(t *testing.T) {
 	}
 	press(m, "enter")
 	out := screen(m)
-	for _, want := range []string{" GET  https://api.shop.test/cart", "200 OK", "route vpn", " Response ", "JSON", `"items": []`} {
+	for _, want := range []string{" GET  https://api.shop.test/cart", "200 OK", "via 3g", " Response ", "JSON", `"items": []`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("response tab misses %q:\n%s", want, out)
 		}
@@ -410,16 +409,9 @@ func TestDetailsDecodePrettyPrintAndWrapBodies(t *testing.T) {
 func TestHostActionsCurlExportClear(t *testing.T) {
 	m, act := newModel()
 	press(m, "up") // the tunnel to pinned.bank.test
-	press(m, "b")
-	if !strings.Contains(m.status, "added pinned.bank.test to bypass") || !strings.Contains(m.status, "deprecated") {
-		t.Fatalf("b does not say the bypass is deprecated: %q", m.status)
-	}
 	press(m, "n")
-	if strings.Contains(m.status, "deprecated") {
-		t.Fatalf("n says something is deprecated: %q", m.status)
-	}
-	if strings.Join(act.bypassed, ",") != "pinned.bank.test" || strings.Join(act.noDecrypt, ",") != "pinned.bank.test" {
-		t.Fatalf("bypass %v no-decrypt %v", act.bypassed, act.noDecrypt)
+	if !strings.Contains(m.status, "added pinned.bank.test to no-decrypt") || strings.Join(act.noDecrypt, ",") != "pinned.bank.test" {
+		t.Fatalf("no-decrypt %v, status %q", act.noDecrypt, m.status)
 	}
 	press(m, "c")
 	if !strings.Contains(m.status, "a tunnel has no request") {
@@ -612,7 +604,7 @@ func TestSourcePickerListsAppsUnderTheirSimulator(t *testing.T) {
 
 func TestTabCompletesTheFilterFromWhatWasCaptured(t *testing.T) {
 	m, _ := newModel()
-	m.Update(FlowMsg(store.Flow{ID: 4, Kind: store.KindHTTP, Source: "device 192.168.0.23 · Bank", Method: "GET", URL: "https://api.bank.test/me", Status: 200, Route: "vpn",
+	m.Update(FlowMsg(store.Flow{ID: 4, Kind: store.KindHTTP, Source: "device 192.168.0.23 · Bank", Method: "GET", URL: "https://api.bank.test/me", Status: 200,
 		RespHeader: http.Header{"X-Request-Id": {"7"}, "X-Rate-Limit": {"9"}}}))
 	press(m, "/")
 
@@ -677,7 +669,7 @@ func TestTimingTabShowsTheWaterfall(t *testing.T) {
 	f := store.Flow{ID: 1, Kind: store.KindHTTP, Method: "GET", URL: "https://api.test/slow", Status: 200, Duration: 400 * time.Millisecond,
 		Throttle: "3g", Timing: store.Timing{Known: true, Blocked: 100 * time.Millisecond, DNS: 10 * time.Millisecond, Connect: 20 * time.Millisecond,
 			TLS: 30 * time.Millisecond, Send: time.Millisecond, Wait: 200 * time.Millisecond, Receive: 39 * time.Millisecond}}
-	mocked := store.Flow{ID: 2, Kind: store.KindHTTP, Method: "GET", URL: "https://api.test/cart", Status: 503, Route: "mock", Mock: "GET https://api.test/cart"}
+	mocked := store.Flow{ID: 2, Kind: store.KindHTTP, Method: "GET", URL: "https://api.test/cart", Status: 503, Mock: "GET https://api.test/cart"}
 	m := New(act, "127.0.0.1:9090", []store.Flow{f, mocked})
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	press(m, "up", "enter", "3")

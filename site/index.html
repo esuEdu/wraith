@@ -74,13 +74,13 @@
         <div class="chrome" aria-hidden="true"><i></i><i></i><i></i></div>
 <pre><span class="t-badge"> wraith </span> <span class="t-soft">127.0.0.1:9090</span><span class="t-dim"> · </span><span class="t-soft">capturing </span><span class="t-acc"><b>all</b></span><span class="t-dim"> · </span><span class="t-soft"><span id="live-count">214</span> flows</span><span class="t-dim"> · </span><span class="t-soft">devices </span>192.168.0.12:9090
 <span class="t-dim t-rule">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
-<span id="live-rows"><span class="live-row"> <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/cart</span>
-</span><span class="live-row"> <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">201</span> <span class="t-post">POST   </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/orders</span>
-</span><span class="live-row"> <span class="t-dim">12:04:32</span> device 192.168.0.23    <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://api.shop.example<span class="t-soft">/v2/profile</span>
-</span><span class="live-row"> <span class="t-dim">12:04:32</span> device 192.168.0.23    <span class="t-dim">tun</span> <b>CONNECT</b> <span class="t-dim">vpn   </span> gateway.icloud.com:443<span class="t-soft"></span>  <span class="t-dim">no_decrypt</span>
-</span><span class="live-row"> <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-mag">direct</span> https://rates.partner.example<span class="t-soft">/today</span>
-</span><span class="live-row"> <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <span class="t-get">GET    </span> <span class="t-dim">vpn   </span> https://cdn.shop.example<span class="t-soft">/img/42.png</span>
-</span><span class="live-row"><span class="t-mark">▌</span><span class="t-sel">12:04:34 device 192.168.0.23    503 GET     vpn    https://api.shop.example/v2/recs</span>
+<span id="live-rows"><span class="live-row"> <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span>        https://api.shop.example<span class="t-soft">/v2/cart</span>
+</span><span class="live-row"> <span class="t-dim">12:04:31</span> sim iPhone 17 · Shop   <span class="t-ok">201</span> <span class="t-post">POST   </span>        https://api.shop.example<span class="t-soft">/v2/orders</span>
+</span><span class="live-row"> <span class="t-dim">12:04:32</span> device 192.168.0.23    <span class="t-ok">200</span> <span class="t-get">GET    </span>        https://api.shop.example<span class="t-soft">/v2/profile</span>
+</span><span class="live-row"> <span class="t-dim">12:04:32</span> device 192.168.0.23    <span class="t-dim">tun</span> <b>CONNECT</b>        gateway.icloud.com:443<span class="t-soft"></span>  <span class="t-dim">no_decrypt</span>
+</span><span class="live-row"> <span class="t-dim">12:04:32</span> sim iPhone 17 · Shop   <span class="t-ok">200</span> <span class="t-get">GET    </span> <span class="t-mag">mock  </span> https://rates.partner.example<span class="t-soft">/today</span>
+</span><span class="live-row"> <span class="t-dim">12:04:33</span> sim iPhone 17 · Shop   <span class="t-warn">404</span> <span class="t-get">GET    </span>        https://cdn.shop.example<span class="t-soft">/img/42.png</span>
+</span><span class="live-row"><span class="t-mark">▌</span><span class="t-sel">12:04:34 device 192.168.0.23    503 GET            https://api.shop.example/v2/recs</span>
 </span></span><span class="t-dim t-rule">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
  <span class="t-acc"><b>↵</b></span> <span class="t-soft">details</span>  <span class="t-acc"><b>s</b></span> <span class="t-soft">source</span>  <span class="t-acc"><b>d</b></span> <span class="t-soft">device</span>  <span class="t-acc"><b>/</b></span> <span class="t-soft">filter</span>  <span class="t-acc"><b>c</b></span> <span class="t-soft">curl</span>  <span class="t-acc"><b>e</b></span> <span class="t-soft">export</span>  <span class="t-acc"><b>n</b></span> <span class="t-soft">no-decrypt</span>  <span class="t-acc"><b>x</b></span> <span class="t-soft">clear</span>  <span class="t-acc"><b>q</b></span> <span class="t-soft">quit</span></pre>
       </figure>
@@ -89,7 +89,7 @@
 
   <section class="band alt gutter" aria-labelledby="jobs-title">
     <div class="container">
-      <h2 id="jobs-title">Two jobs, one proxy</h2>
+      <h2 id="jobs-title">See it, then break it</h2>
       <p class="intro">wraith sets itself as your Mac's proxy while it runs and puts your settings back when it stops, even after a crash.</p>
       <div class="jobs">
         <div class="job">
@@ -103,21 +103,21 @@
             <li><code>all</code>: everything that uses the system proxy</li>
           </ul>
           <p>HTTP/1.1 and HTTP/2, headers and bodies, GraphQL operations, timing and WebSocket messages, in a live view, as log lines or JSON, and exported as HAR.</p>
-          <p>Then make the app misbehave on purpose: <kbd>m</kbd> <a href="docs/#mocks">mocks</a> a request with a response you edit, and <kbd>t</kbd> <a href="docs/#slow-network">slows the network</a> down to 3G or worse, for that app only. <kbd>=</kbd> compares two requests to see what changed.</p>
         </div>
         <div class="job">
-          <h3>Route around the VPN (deprecated)</h3>
-          <p><strong>Deprecated in v1.6, removed in v2.0.0.</strong> Hosts on the bypass list are resolved and connected on the physical interface instead of the VPN tunnel, IPv6 first.</p>
+          <h3>Make it misbehave</h3>
+          <p>Test the screens your backend rarely sends, for the app you capture only.</p>
+          <ul>
+            <li><kbd>m</kbd> <a href="docs/#mocks">mocks</a> a request with its response; edit the file and the next request gets your status, headers and body</li>
+            <li><kbd>t</kbd> <a href="docs/#slow-network">slows the network</a> to <code>lte</code>, <code>3g</code>, <code>edge</code> or worse</li>
+            <li><kbd>=</kbd> compares two requests to see what changed</li>
+          </ul>
           <div class="terminal">
-<pre><span class="t-dim">$</span> wraith bypass add api.partner.example
-<span class="t-dim">wraith: added api.partner.example</span>
-<span class="t-dim">$</span> wraith doctor
-<span class="t-ok">ok</span>    interface: en0 (192.168.1.20, 2001:db8::5)
-<span class="t-dim">info</span>  IPv4: normal path via utun6 (a VPN tunnel)
-<span class="t-dim">info</span>  IPv6: normal path and bypass via en0
-<span class="t-ok">ok</span>    bypass works for api.partner.example over IPv6</pre>
+<pre><span class="t-dim">12:04:31</span> sim iPhone 17 · Shop  <span class="t-ok">200</span> <span class="t-get">GET    </span>        https://api.shop.example/v2/cart
+<span class="t-dim">12:04:32</span> sim iPhone 17 · Shop  <span class="t-bad">503</span> <span class="t-get">GET    </span> <span class="t-mag">mock  </span> https://api.shop.example/v2/recs
+<span class="t-dim">12:04:33</span> sim iPhone 17 · Shop  <span class="t-ok">201</span> <span class="t-post">POST   </span> <span class="t-dim">3g    </span> https://api.shop.example/v2/order</pre>
           </div>
-          <p>If the bypass cannot work, the connection fails. It is never sent through the VPN instead.</p>
+          <p>Mocked and slowed rows say so in the via column, and in log lines and exports.</p>
         </div>
       </div>
     </div>
@@ -126,10 +126,10 @@
   <section class="band gutter" aria-labelledby="flow-title">
     <div class="container">
       <h2 id="flow-title">What happens to a connection</h2>
-      <p class="intro">Three decisions, made separately: a tunnel can be decrypted and still go through the VPN, or pass through untouched and still be bypassed.</p>
+      <p class="intro">Three questions, for every connection: whose is it, may wraith read it, and should the real server answer.</p>
       <div class="flow-wrap">
         <svg class="flow" viewBox="0 0 980 230" role="img" aria-labelledby="flow-svg-title">
-          <title id="flow-svg-title">An app connects to wraith; wraith asks who opened the connection, whether to decrypt it, and which route to take, then connects to the server through the VPN or through Wi-Fi or Ethernet.</title>
+          <title id="flow-svg-title">An app connects to wraith; wraith asks who opened the connection, whether to decrypt it, and whether a mock answers it; otherwise it forwards the request to the server, slowed down if you asked.</title>
           <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="tip"/></marker></defs>
           <circle class="packet" r="5"><animateMotion dur="4.2s" repeatCount="indefinite" path="M75 115H655C770 115 770 60 885 60"/></circle>
           <circle class="packet b" r="5"><animateMotion dur="4.2s" begin="-1.4s" repeatCount="indefinite" path="M75 115H655C770 115 770 170 885 170"/></circle>
@@ -151,29 +151,29 @@
           <text class="sub" x="475" y="128" text-anchor="middle">in source, trusted CA</text>
 
           <rect class="box" x="580" y="80" width="150" height="70" rx="10"/>
-          <text class="label" x="655" y="108" text-anchor="middle">Route</text>
-          <text class="sub" x="655" y="128" text-anchor="middle">bypass list</text>
+          <text class="label" x="655" y="108" text-anchor="middle">Mock?</text>
+          <text class="sub" x="655" y="128" text-anchor="middle">mocks in config.yaml</text>
 
           <rect class="box" x="800" y="30" width="170" height="60" rx="10"/>
-          <text class="label" x="885" y="57" text-anchor="middle">VPN tunnel</text>
-          <text class="sub" x="885" y="76" text-anchor="middle">the normal path</text>
+          <text class="label" x="885" y="57" text-anchor="middle">Server</text>
+          <text class="sub" x="885" y="76" text-anchor="middle">slowed, if you asked</text>
           <rect class="box" x="800" y="140" width="170" height="60" rx="10"/>
-          <text class="label" x="885" y="167" text-anchor="middle">Wi-Fi / Ethernet</text>
-          <text class="sub" x="885" y="186" text-anchor="middle">bypassed hosts</text>
+          <text class="label" x="885" y="167" text-anchor="middle">Your mock</text>
+          <text class="sub" x="885" y="186" text-anchor="middle">answered by wraith</text>
 
           <path class="edge" d="M140 115H206" marker-end="url(#arrow)"/>
           <path class="edge" d="M370 115H396" marker-end="url(#arrow)"/>
           <path class="edge" d="M550 115H576" marker-end="url(#arrow)"/>
           <path class="edge" d="M730 105C770 105 770 60 796 60" marker-end="url(#arrow)"/>
           <path class="edge alt" d="M730 125C770 125 770 170 796 170" marker-end="url(#arrow)"/>
-          <text class="edge-label" x="760" y="62">vpn</text>
-          <text class="edge-label" x="760" y="194">direct</text>
+          <text class="edge-label" x="760" y="62">forward</text>
+          <text class="edge-label" x="760" y="194">mock</text>
         </svg>
       </div>
       <div class="flow-notes">
         <div><h3>Who opened it</h3><p>wraith finds the process that owns the client's socket: from the kernel, or with <code>lsof</code> on macOS 27.2 and later. A process under <code>launchd_sim</code> belongs to a simulator; a helper inside an <code>.app</code> belongs to that app. A connection from your Wi-Fi is a device you set up.</p></div>
         <div><h3>Decrypt or not</h3><p>Inside the source, simulator traffic is decrypted with wraith's own CA. Mac apps are decrypted only if you made the Mac trust it. Pinned apps and hosts on <code>no_decrypt</code> pass through.</p></div>
-        <div><h3>Which route</h3><p>Bypassed hosts use DNS and sockets bound to the physical interface. Everything else takes the normal path, through the VPN if one is up. The bypass is deprecated and goes away in v2.0.0.</p></div>
+        <div><h3>Mock or forward</h3><p>A request that matches a mock gets your status, headers and body; the server never sees it. Everything else goes to the server, with the slow-network profile's latency and bandwidth when one is on.</p></div>
       </div>
     </div>
   </section>

@@ -1,4 +1,6 @@
-package route
+// Package netif finds the Mac's physical network interface: the Wi-Fi or Ethernet
+// one that --device listens on.
+package netif
 
 import (
 	"context"
@@ -11,21 +13,22 @@ import (
 	"github.com/esuEdu/wraith/internal/execx"
 )
 
-// Iface is the physical interface bypassed connections leave from.
+// Iface is the physical interface: Wi-Fi or Ethernet, not a VPN tunnel.
 type Iface struct {
 	Name  string
 	Index int
 	Addrs []net.IP // global unicast addresses
 }
 
-// ErrNoInterface means no physical interface could be used for the bypass.
+// ErrNoInterface means no physical interface with its own default route is up.
 var ErrNoInterface = errors.New("no physical network interface with a default route")
 
 var physical = regexp.MustCompile(`^en[0-9]+$`)
 
-// DetectIface returns the interface to bypass through. name is the configured value:
-// "auto" (or "") picks the first en* interface that is up, has a global address and its
-// own scoped default route (R3.2); anything else must name such an interface.
+// DetectIface returns the physical interface. name is the configured value: "auto" (or
+// "") picks the first en* interface that is up, has a global address and its own scoped
+// default route, which macOS keeps even while a VPN owns the main one; anything else
+// must name such an interface.
 func DetectIface(ctx context.Context, run execx.Runner, name string) (Iface, error) {
 	if name != "" && name != "auto" {
 		if err := execx.CheckInterface(name); err != nil {

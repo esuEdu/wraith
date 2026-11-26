@@ -35,24 +35,24 @@ func TestDoctorOnAHealthySetup(t *testing.T) {
 		{"ok", "CA: wraith CA"},
 		{"info", "the Mac does not trust the CA"},
 		{"ok", "iPhone 18 Pro Max"},
-		{"warn", "interface:"}, // no usable interface in tests, and nothing to bypass
+		{"warn", "interface:"}, // no usable interface in tests
 	} {
 		if !hasLine(out, want.status, want.text) {
 			t.Errorf("missing %q line with %q:\n%s", want.status, want.text, out)
 		}
 	}
 	if strings.Contains(out, "bypass") {
-		t.Errorf("doctor talks about the bypass with nothing to bypass:\n%s", out)
+		t.Errorf("doctor talks about the bypass:\n%s", out)
 	}
 }
 
 func TestDoctorFindsProblems(t *testing.T) {
 	e := newEnv(t)
-	if code := e.run("bypass", "add", "api.example.test"); code != ExitOK {
-		t.Fatal("bypass add failed")
-	}
 	h, err := home.Open(e.dir)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.WriteFile("config.yaml", []byte("bypass: [api.example.test]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := sysproxy.New(e.fake, h, nil).Enable(context.Background(), 9090); err != nil { // then "crash"
@@ -69,14 +69,13 @@ func TestDoctorFindsProblems(t *testing.T) {
 	for _, want := range []string{
 		"settings left by a run that did not exit cleanly",
 		"points at wraith (127.0.0.1:9090) but wraith is not running",
-		"interface:",
 	} {
 		if !hasLine(out, "fail", want) {
 			t.Errorf("missing fail line with %q:\n%s", want, out)
 		}
 	}
-	if !hasLine(out, "warn", "bypass: the VPN bypass is deprecated") {
-		t.Errorf("no deprecation line for the bypass list:\n%s", out)
+	if !hasLine(out, "warn", "config: a bypass list of 1 host(s) is ignored") {
+		t.Errorf("no line for the old bypass list:\n%s", out)
 	}
 	if !hasLine(out, "info", "CA: not created yet") {
 		t.Errorf("no CA line:\n%s", out)

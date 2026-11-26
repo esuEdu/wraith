@@ -6,7 +6,7 @@
 # verified_by: test | test+manual | manual | lint | release
 # Change this file in the same PR as the spec.
 #
-# done: M0 M1 M2 M3 M4 M5
+# done: M0 M1 M2 M3 M4 M5 M6
 id,milestone,verified_by
 R1.1,M3,test
 R1.2,M3,test
@@ -20,11 +20,6 @@ R2.3,M2,test
 R2.4,M2,test
 R2.5,M2,test
 R2.6,M2,test
-R3.1,M4,test
-R3.2,M4,test+manual
-R3.3,M4,test
-R3.4,M4,test+manual
-R3.5,M4,test
 R4.1,M1,test
 R4.2,M1,test
 R4.3,M1,test+manual
@@ -50,7 +45,6 @@ S2.1,M1,test
 S2.2,M1,test
 S2.3,M2,test+lint
 S2.4,M2,test
-S2.5,M4,test+manual
 S2.6,M5,test+manual
 S3.1,M5,test
 S3.2,M5,test

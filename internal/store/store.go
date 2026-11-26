@@ -24,7 +24,6 @@ type Flow struct {
 	Duration time.Duration
 
 	Source string // label of the process that made it, e.g. "sim iPhone 17 · Shop"
-	Route  string // vpn, direct or failed (R3.5)
 
 	Method string
 	URL    string // full URL; for tunnels "host:port"
@@ -48,6 +47,15 @@ type Flow struct {
 	// MessagesDropped counts the older ones let go.
 	Messages        []Message
 	MessagesDropped int
+}
+
+// Via says what stood between the app and the upstream: "mock" when a mock answered,
+// the slow-network profile (e.g. "3g") when it was throttled, "" when neither.
+func (f Flow) Via() string {
+	if f.Mock != "" {
+		return "mock"
+	}
+	return f.Throttle
 }
 
 // SetGraphQL fills in GraphQL and GraphQLErrors from the flow's request and response.

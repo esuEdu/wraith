@@ -13,7 +13,7 @@ import (
 const maxQuery = 64
 
 // formatFlow is one log-mode line: time, source, method, URL (query cut), status, size,
-// duration and route. Never a header value or a body (S3.3). Tunnels show "tunnel"
+// duration and what it went through (a mock, a slow-network profile). Never a header value or a body (S3.3). Tunnels show "tunnel"
 // instead of a status when they opened.
 func formatFlow(f store.Flow) string {
 	var b strings.Builder
@@ -33,8 +33,8 @@ func formatFlow(f store.Flow) string {
 	if f.Kind == store.KindHTTP {
 		b.WriteString(" " + humanSize(f.RespBody.Size) + " " + humanDuration(f.Duration))
 	}
-	if f.Route != "" {
-		b.WriteString(" " + f.Route)
+	if via := f.Via(); via != "" {
+		b.WriteString(" " + via)
 	}
 	if f.Err != "" {
 		b.WriteString(" (" + f.Err + ")")
@@ -58,7 +58,7 @@ type jsonFlow struct {
 	Status     int    `json:"status"`
 	Size       int64  `json:"size"`
 	DurationMS int64  `json:"duration_ms"`
-	Route      string `json:"route,omitempty"`
+	Via        string `json:"via,omitempty"`
 	Error      string `json:"error,omitempty"`
 	GraphQL    string `json:"graphql,omitempty"`
 	GQLErrors  int    `json:"graphql_errors,omitempty"`
@@ -68,7 +68,7 @@ func formatFlowJSON(f store.Flow) string {
 	b, _ := json.Marshal(jsonFlow{
 		Time: f.Start.Format(time.RFC3339Nano), Source: f.Source, Kind: f.Kind, Method: f.Method,
 		URL: cutQuery(f.URL), Status: f.Status, Size: f.RespBody.Size,
-		DurationMS: f.Duration.Milliseconds(), Route: f.Route, Error: f.Err,
+		DurationMS: f.Duration.Milliseconds(), Via: f.Via(), Error: f.Err,
 		GraphQL: store.GraphQLLabel(f.GraphQL), GQLErrors: f.GraphQLErrors,
 	})
 	return string(b)

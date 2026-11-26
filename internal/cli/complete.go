@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
-	"io/fs"
 	"net"
 	"os"
 	"slices"
@@ -18,9 +16,9 @@ import (
 )
 
 // Shell completion: cobra completes commands and flags (wraith st<tab> → start), and
-// these complete the values that come from the machine: sources, simulators, interfaces,
-// bypassed hosts and remembered devices. They only read: no ~/.wraith or config.yaml is
-// created by pressing tab.
+// these complete the values that come from the machine: sources, simulators, interfaces
+// and remembered devices. They only read: no ~/.wraith or config.yaml is created by
+// pressing tab.
 
 type completeFunc = func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective)
 
@@ -60,24 +58,6 @@ func (a *app) peekHome() (*home.Home, bool) {
 	}
 	h, err := home.Open(dir)
 	return h, err == nil
-}
-
-// peekConfig is config.yaml if there is one, else the defaults.
-func (a *app) peekConfig() config.Config {
-	h, ok := a.peekHome()
-	if !ok {
-		return config.Default()
-	}
-	defer func() { _ = h.Close() }()
-	b, err := h.ReadFile(config.FileName)
-	if errors.Is(err, fs.ErrNotExist) || err != nil {
-		return config.Default()
-	}
-	cfg, err := config.Parse(b)
-	if err != nil {
-		return config.Default()
-	}
-	return cfg
 }
 
 // completeSources offers --source values: the fixed ones, then booted simulators, the
@@ -155,15 +135,6 @@ func completeIfaces(context.Context) []cobra.Completion {
 	return list
 }
 
-func (a *app) completeBypassed(context.Context) []cobra.Completion {
-	return slices.Clone(a.peekConfig().Bypass)
-}
-
-// completeExactBypassed is the bypass list without *.domain patterns, for doctor --host.
-func (a *app) completeExactBypassed(ctx context.Context) []cobra.Completion {
-	return slices.DeleteFunc(a.completeBypassed(ctx), func(h string) bool { return strings.Contains(h, "*") })
-}
-
 func (a *app) rememberedIPs() []string {
 	h, ok := a.peekHome()
 	if !ok {
@@ -213,9 +184,6 @@ func (a *app) setCompletions(root *cobra.Command) {
 		flag(start, name, noArgs)
 	}
 	flag(find("ca", "install"), "sim", values(a.completeSims))
-	flag(find("doctor"), "host", values(a.completeExactBypassed))
-	find("bypass", "rm").ValidArgsFunction = values(a.completeBypassed)
-	find("bypass", "add").ValidArgsFunction = noArgs
 	find("devices", "forget").ValidArgsFunction = values(a.completeDevices)
 
 	// Commands without arguments complete nothing rather than file names.

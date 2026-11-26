@@ -33,21 +33,11 @@ func TestTabCompletesCommandsFlagsAndValues(t *testing.T) {
 	if got := e.complete("start", "--dev"); strings.Join(got, " ") != "--device" {
 		t.Fatalf("wraith start --dev<tab>: %v", got)
 	}
-	if got := e.complete("bypass", "rm", ""); len(got) != 0 {
-		t.Fatalf("nothing bypassed yet, but offered %v", got)
+	if got := e.complete("b"); len(got) != 0 {
+		t.Fatalf("wraith b<tab> offers the removed bypass: %v", got)
 	}
 	if _, err := os.Stat(e.dir); !os.IsNotExist(err) {
 		t.Fatalf("tab created %s (%v)", e.dir, err)
-	}
-
-	if code := e.run("bypass", "add", "api.partner.io", "*.cdn.test"); code != ExitOK {
-		t.Fatalf("bypass add: %d\n%s", code, e.stderr)
-	}
-	if got := e.complete("bypass", "rm", "api"); strings.Join(got, " ") != "api.partner.io" {
-		t.Fatalf("bypass rm api<tab>: %v", got)
-	}
-	if got := e.complete("doctor", "--host", ""); strings.Join(got, " ") != "api.partner.io" {
-		t.Fatalf("doctor --host <tab> offers patterns: %v", got)
 	}
 
 	h := e.home()

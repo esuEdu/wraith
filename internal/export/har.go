@@ -209,8 +209,8 @@ func harEntryFor(f store.Flow, r Redactor) harEntry {
 	if f.Source != "" {
 		notes = append(notes, "source: "+f.Source)
 	}
-	if f.Route != "" {
-		notes = append(notes, "route: "+f.Route)
+	if f.Throttle != "" {
+		notes = append(notes, "slowed like "+f.Throttle)
 	}
 	if f.ReqBody.Truncated {
 		notes = append(notes, fmt.Sprintf("request body truncated to %d of %d bytes", len(f.ReqBody.Data), f.ReqBody.Size))

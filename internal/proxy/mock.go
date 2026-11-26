@@ -89,8 +89,12 @@ func (s *Server) mock(w http.ResponseWriter, r *http.Request, url string) bool {
 		if limit := s.opts.Store.MaxBody(); int64(len(body)) > limit {
 			body = body[:limit]
 		}
+		rule := m.Rule
+		if rule == "" { // a flow with Mock set is a mocked one (store.Flow.Via)
+			rule = "mock"
+		}
 		fr.mu.Lock()
-		fr.f.Status, fr.f.Route, fr.f.Mock, fr.f.Err, fr.f.Throttle = m.Status, "mock", m.Rule, m.Err, ""
+		fr.f.Status, fr.f.Mock, fr.f.Err, fr.f.Throttle = m.Status, rule, m.Err, ""
 		fr.f.RespHeader = h.Clone()
 		fr.f.RespBody = store.Body{Data: body, Size: int64(len(m.Body)), Truncated: len(body) < len(m.Body)}
 		fr.mu.Unlock()

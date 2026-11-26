@@ -32,12 +32,15 @@ type Config struct {
 	Source    string   `yaml:"source"`
 	Interface string   `yaml:"interface"`
 	Capture   Capture  `yaml:"capture"`
-	Bypass    []string `yaml:"bypass"`
 	NoDecrypt []string `yaml:"no_decrypt"`
 	Export    Export   `yaml:"export"`
 	Theme     string   `yaml:"theme"`
 	Throttle  string   `yaml:"throttle"`
 	Mocks     []Mock   `yaml:"mocks"`
+
+	// Bypass is the VPN bypass list of wraith 1.x, removed in v2.0.0. It is read so an
+	// old config.yaml still loads, and otherwise ignored: wraith warns while it is set.
+	Bypass []string `yaml:"bypass,omitempty"`
 }
 
 // Throttles are the slow-network profiles (the proxy's), and off.
@@ -131,7 +134,6 @@ func Default() Config {
 		Source:    "simulator",
 		Interface: "auto",
 		Capture:   Capture{MaxFlows: 5000, MaxBodyBytes: 1 << 20},
-		Bypass:    []string{},
 		NoDecrypt: []string{"*.apple.com", "*.icloud.com"},
 		Export:    Export{RedactHeaders: []string{"Authorization", "Cookie", "Set-Cookie", "*token*"}},
 		Theme:     "heliotrope-haze",
@@ -146,13 +148,11 @@ const DefaultYAML = `# wraith configuration. Command-line flags override these v
 
 port: 9090                  # proxy port on 127.0.0.1 and ::1
 source: simulator           # all | simulator | simulator:<udid|name> | app:<name|bundle-id> | pid:<pid> | device | device:<ip>
-interface: auto             # physical interface for bypassed hosts: auto, or en0, en1, ...
+interface: auto             # the Wi-Fi or Ethernet interface --device listens on: auto, or en0, en1, ...
 
 capture:
   max_flows: 5000           # flows kept in memory
   max_body_bytes: 1048576   # bodies above this are truncated
-
-bypass: []                  # hosts that skip the VPN, e.g. ["*.example.com", "api.partner.io"]
 
 no_decrypt:                 # always passed through, never decrypted
   - "*.apple.com"
@@ -191,9 +191,6 @@ func Parse(b []byte) (Config, error) {
 	var extra any
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return Default(), errors.New("config must be a single YAML document")
-	}
-	if cfg.Bypass == nil {
-		cfg.Bypass = []string{}
 	}
 	if cfg.NoDecrypt == nil {
 		cfg.NoDecrypt = []string{}
@@ -292,23 +289,18 @@ func (c *Config) normalize() error {
 	if c.Capture.MaxBodyBytes < 0 {
 		bad("capture.max_body_bytes", "must not be negative, got %d", c.Capture.MaxBodyBytes)
 	}
-	for _, list := range []struct {
-		name string
-		p    *[]string
-	}{{"bypass", &c.Bypass}, {"no_decrypt", &c.NoDecrypt}} {
-		seen := map[string]bool{}
-		for i, raw := range *list.p {
-			p, err := NormalizeHostPattern(raw)
-			if err != nil {
-				bad(fmt.Sprintf("%s[%d]", list.name, i), "%v", err)
-				continue
-			}
-			if seen[p] {
-				bad(fmt.Sprintf("%s[%d]", list.name, i), "%q is listed twice", p)
-			}
-			seen[p] = true
-			(*list.p)[i] = p
+	seen := map[string]bool{}
+	for i, raw := range c.NoDecrypt {
+		p, err := NormalizeHostPattern(raw)
+		if err != nil {
+			bad(fmt.Sprintf("no_decrypt[%d]", i), "%v", err)
+			continue
 		}
+		if seen[p] {
+			bad(fmt.Sprintf("no_decrypt[%d]", i), "%q is listed twice", p)
+		}
+		seen[p] = true
+		c.NoDecrypt[i] = p
 	}
 	for i, h := range c.Export.RedactHeaders {
 		if !headerRe.MatchString(h) {
@@ -352,7 +344,7 @@ func validSource(s string) error {
 	return fmt.Errorf("%q must be all, simulator, simulator:<udid|name>, app:<name|bundle-id>, pid:<pid>, device or device:<ip>", s)
 }
 
-// NormalizeHostPattern checks a bypass or no-decrypt entry and returns it lower-cased
+// NormalizeHostPattern checks a no-decrypt entry and returns it lower-cased
 // without a trailing dot. Valid: an exact host (api.x.com), a wildcard for subdomains
 // (*.x.com), or an IP address. Ports, schemes and other wildcards are not allowed.
 func NormalizeHostPattern(raw string) (string, error) {
@@ -392,10 +384,7 @@ func MatchesAny(patterns []string, host string) bool {
 	return false
 }
 
-// WriteBypass replaces the bypass list in config.yaml with patterns (R6.2).
-func WriteBypass(h *home.Home, patterns []string) error { return writeList(h, "bypass", patterns) }
-
-// WriteNoDecrypt replaces the no_decrypt list in config.yaml with patterns.
+// WriteNoDecrypt replaces the no_decrypt list in config.yaml with patterns (R6.2).
 func WriteNoDecrypt(h *home.Home, patterns []string) error {
 	return writeList(h, "no_decrypt", patterns)
 }

@@ -29,7 +29,7 @@ type theme struct {
 	tabOff     lipgloss.Style
 	key        lipgloss.Style // header names
 
-	ok, warn, bad, direct lipgloss.Style
+	ok, warn, bad, via lipgloss.Style
 
 	get, post, put, del lipgloss.Style // methods
 
@@ -71,7 +71,7 @@ func heliotropeHaze() *theme {
 		ok:         st().Foreground(green),
 		warn:       st().Foreground(yellow),
 		bad:        st().Foreground(red),
-		direct:     st().Foreground(cyan),
+		via:        st().Foreground(cyan),
 		get:        st().Bold(true).Foreground(blue),
 		post:       st().Bold(true).Foreground(green),
 		put:        st().Bold(true).Foreground(yellow),
@@ -105,7 +105,7 @@ func terminalTheme() *theme {
 		ok:         st().Foreground(lipgloss.Green),
 		warn:       st().Foreground(lipgloss.Yellow),
 		bad:        st().Foreground(lipgloss.Red),
-		direct:     st().Foreground(lipgloss.Magenta),
+		via:        st().Foreground(lipgloss.Magenta),
 		get:        st().Bold(true).Foreground(lipgloss.Blue),
 		post:       st().Bold(true).Foreground(lipgloss.Green),
 		put:        st().Bold(true).Foreground(lipgloss.Yellow),

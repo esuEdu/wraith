@@ -21,7 +21,7 @@ var replayDrop = []string{"Connection", "Proxy-Connection", "Keep-Alive", "Trans
 	"Upgrade", "Proxy-Authorization", "Proxy-Authenticate", "Content-Length", "Host"}
 
 // Replay sends a captured request again, the way the proxy forwards one: through the
-// same dialer and route (VPN or bypass), with the upstream certificate verified as
+// same dialer, with the upstream certificate verified as
 // usual (S2.3, S2.4). The result is recorded as a new flow, its source marked
 // "replay", and returned. A tunnel, or a request whose body was cut at capture, cannot
 // be sent again.
@@ -78,7 +78,7 @@ func (s *Server) Replay(ctx context.Context, f store.Flow) (store.Flow, error) {
 	}
 	resp, err := rt.RoundTrip(req)
 	if err != nil {
-		fr.failed(http.StatusBadGateway, s.routeName(host, true), err.Error())
+		fr.failed(http.StatusBadGateway, err.Error())
 	} else {
 		fr.response(resp)
 		_, _ = io.Copy(io.Discard, resp.Body) // the capture records the flow at the end

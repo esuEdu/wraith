@@ -1,9 +1,8 @@
 # wraith
 
-A terminal proxy for macOS that does two things:
+A terminal proxy for macOS that inspects HTTP and HTTPS from a source you choose: the iOS Simulator, an iPhone or iPad on your Wi-Fi, one Mac app, one process, or everything. Everything else passes through untouched: never decrypted, stored or shown.
 
-- **Inspect** HTTP and HTTPS from a source you choose: the iOS Simulator, an iPhone or iPad on your Wi-Fi, one Mac app, one process, or everything. Everything else passes through untouched: never decrypted, stored or shown.
-- **Route** chosen hosts around your VPN, out through Wi-Fi or Ethernet. If that fails, the connection fails; it is never sent through the VPN instead. *Deprecated in v1.6 and removed in v2.0.0: wraith is becoming an inspector only.*
+wraith 1.x could also route chosen hosts around a VPN; that was removed in v2.0.0. An old `bypass:` list in the configuration is ignored, with a warning.
 
 **Website and docs: https://esuedu.github.io/wraith/**
 
@@ -29,7 +28,6 @@ wraith puts its CA into each booted simulator, decrypts the simulator's traffic 
 ```sh
 wraith start --source app:Safari         # one Mac app (decrypted only after `wraith ca trust --mac`)
 wraith start --device                    # an iPhone or iPad on the same Wi-Fi: scan the QR code
-wraith bypass add api.partner.example    # this host skips the VPN (deprecated)
 wraith doctor                            # checks the proxy, CA and simulators
 wraith export --har flows.har            # save flows from the running wraith, secrets redacted
 wraith start --throttle 3g               # slow the captured app's network

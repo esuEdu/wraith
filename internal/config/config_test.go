@@ -122,11 +122,11 @@ func TestS5_3_ValuesValidatedAtLoad(t *testing.T) {
 		"interface shell":   "interface: 'en0; rm -rf /'\n",
 		"max_flows zero":    "capture:\n  max_flows: 0\n",
 		"negative body":     "capture:\n  max_body_bytes: -1\n",
-		"bypass with port":  "bypass: [example.com:443]\n",
-		"bypass with url":   "bypass: ['https://example.com']\n",
-		"bypass mid star":   "bypass: ['api.*.example.com']\n",
-		"bypass bare star":  "bypass: ['*']\n",
-		"bypass duplicate":  "bypass: [a.com, A.com.]\n",
+		"host with port":    "no_decrypt: [example.com:443]\n",
+		"host with url":     "no_decrypt: ['https://example.com']\n",
+		"mid star":          "no_decrypt: ['api.*.example.com']\n",
+		"bare star":         "no_decrypt: ['*']\n",
+		"duplicate":         "no_decrypt: [a.com, A.com.]\n",
 		"no_decrypt label":  "no_decrypt: ['-bad.com']\n",
 		"redact header bad": "export:\n  redact_headers: ['X Token']\n",
 		"theme unknown":     "theme: neon\n",
@@ -168,9 +168,9 @@ func TestValidSourcesAndPatterns(t *testing.T) {
 			t.Errorf("NormalizeHostPattern(%q) = %q, %v; want %q", raw, got, err, want)
 		}
 	}
-	cfg, err := Parse([]byte("bypass: ['*.Corp.Example.com']\n"))
-	if err != nil || cfg.Bypass[0] != "*.corp.example.com" {
-		t.Fatalf("bypass not normalized: %v %v", cfg.Bypass, err)
+	cfg, err := Parse([]byte("no_decrypt: ['*.Corp.Example.com']\n"))
+	if err != nil || cfg.NoDecrypt[0] != "*.corp.example.com" {
+		t.Fatalf("no_decrypt not normalized: %v %v", cfg.NoDecrypt, err)
 	}
 }
 
@@ -193,20 +193,20 @@ func TestR2_5_NoDecryptPatternsMatch(t *testing.T) {
 	}
 }
 
-func TestR6_2_BypassListIsWrittenBackKeepingComments(t *testing.T) {
+func TestR6_2_NoDecryptListIsWrittenBackKeepingComments(t *testing.T) {
 	h := openHome(t)
 	if _, _, err := Load(h); err != nil { // writes DefaultYAML
 		t.Fatal(err)
 	}
-	if err := WriteBypass(h, []string{"*.corp.example.com", "api.partner.io"}); err != nil {
+	if err := WriteNoDecrypt(h, []string{"*.apple.com", "pinned.example.com"}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := Load(h)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(cfg.Bypass, ",") != "*.corp.example.com,api.partner.io" || cfg.Port != 9090 {
-		t.Fatalf("after write: bypass %v port %d", cfg.Bypass, cfg.Port)
+	if strings.Join(cfg.NoDecrypt, ",") != "*.apple.com,pinned.example.com" || cfg.Port != 9090 {
+		t.Fatalf("after write: no_decrypt %v port %d", cfg.NoDecrypt, cfg.Port)
 	}
 	b, _ := h.ReadFile(FileName)
 	for _, comment := range []string{"# wraith configuration", "# proxy port on 127.0.0.1 and ::1", "# always passed through, never decrypted"} {
@@ -214,25 +214,24 @@ func TestR6_2_BypassListIsWrittenBackKeepingComments(t *testing.T) {
 			t.Errorf("comment %q lost:\n%s", comment, b)
 		}
 	}
-	if err := WriteBypass(h, nil); err != nil {
+	if err := WriteNoDecrypt(h, nil); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, _, _ := Load(h); len(cfg.Bypass) != 0 {
-		t.Fatalf("emptied list: %v", cfg.Bypass)
+	if cfg, _, _ := Load(h); len(cfg.NoDecrypt) != 0 {
+		t.Fatalf("emptied list: %v", cfg.NoDecrypt)
 	}
-	if b, _ := h.ReadFile(FileName); !strings.Contains(string(b), "bypass: []") {
+	if b, _ := h.ReadFile(FileName); !strings.Contains(string(b), "no_decrypt: []") {
 		t.Fatalf("empty list not written as []:\n%s", b)
 	}
 }
 
-func TestNoDecryptListIsWrittenBack(t *testing.T) {
-	h := openHome(t)
-	if err := WriteNoDecrypt(h, []string{"*.apple.com", "pinned.example.com"}); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := Load(h)
-	if err != nil || strings.Join(cfg.NoDecrypt, ",") != "*.apple.com,pinned.example.com" || len(cfg.Bypass) != 0 {
+func TestAnOldBypassListStillLoadsAndIsIgnored(t *testing.T) {
+	cfg, err := Parse([]byte("bypass: ['*.corp.example.com', 'https://not-checked']\nport: 9191\n"))
+	if err != nil || cfg.Port != 9191 || len(cfg.Bypass) != 2 {
 		t.Fatalf("cfg %+v, %v", cfg, err)
+	}
+	if strings.Contains(DefaultYAML, "bypass") {
+		t.Fatal("the default config still has a bypass list")
 	}
 }
 
